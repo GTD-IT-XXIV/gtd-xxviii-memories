@@ -37,6 +37,11 @@ class Photo(Base):
     # (which keeps serving originals/thumbnails straight from local disk).
     r2_key: Mapped[str | None] = mapped_column(Text, nullable=True)
     r2_thumbnail_key: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # Event day this photo was taken on (1, 2, 3, ...), set once per batch-scan run
+    # via --day (see scripts/run_batch_scan_cli.py) - the whole run's photos share one
+    # day, since organizers scan one day's folder at a time. Nullable: older rows
+    # imported before this existed, and local single-machine dev, won't have it set.
+    day: Mapped[int | None] = mapped_column(Integer, nullable=True)
 
     faces: Mapped[list["Face"]] = relationship(back_populates="photo", cascade="all, delete-orphan")
 

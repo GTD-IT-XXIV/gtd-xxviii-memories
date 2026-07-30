@@ -13,11 +13,13 @@ Setup (once): set DATABASE_URL and the R2_* vars in backend/.env (see
 backend/.env.example), then run any one machine with --init-db once to create the
 Postgres tables (idempotent - safe to pass on every run too, if preferred).
 
-Run from backend/, one process per laptop, e.g. for a 4-way split:
-    .venv/Scripts/python.exe -m scripts.run_batch_scan_cli --scan-root "C:\\path\\to\\shared\\folder" --batch 0 --total-batches 4 --init-db
-    .venv/Scripts/python.exe -m scripts.run_batch_scan_cli --scan-root "D:\\shared\\folder" --batch 1 --total-batches 4
-    .venv/Scripts/python.exe -m scripts.run_batch_scan_cli --scan-root "C:\\Users\\other\\shared\\folder" --batch 2 --total-batches 4
-    .venv/Scripts/python.exe -m scripts.run_batch_scan_cli --scan-root "C:\\shared\\folder" --batch 3 --total-batches 4
+Run once per event day, pointed at that day's photo folder, with --day set so the
+gallery's day filter works - one process per laptop, e.g. for a 4-way split on day 1:
+    .venv/Scripts/python.exe -m scripts.run_batch_scan_cli --scan-root "C:\\path\\to\\day1" --batch 0 --total-batches 4 --day 1 --init-db
+    .venv/Scripts/python.exe -m scripts.run_batch_scan_cli --scan-root "D:\\day1" --batch 1 --total-batches 4 --day 1
+    .venv/Scripts/python.exe -m scripts.run_batch_scan_cli --scan-root "C:\\Users\\other\\day1" --batch 2 --total-batches 4 --day 1
+    .venv/Scripts/python.exe -m scripts.run_batch_scan_cli --scan-root "C:\\day1" --batch 3 --total-batches 4 --day 1
+Then repeat with --day 2 pointed at day 2's folder, etc.
 """
 
 import argparse
@@ -51,6 +53,14 @@ def main() -> None:
         type=int,
         default=None,
         help="Reload the in-memory cluster index from the DB every N processed files, to pick up clusters created by other machines (default: 200)",
+    )
+    parser.add_argument(
+        "--day",
+        type=int,
+        default=None,
+        help="Event day this scan_root's photos were taken on (e.g. 1, 2, 3), for the gallery's day filter. "
+        "Stamped onto every photo this run creates/reprocesses. Run once per day, pointed at that day's "
+        "photo folder. Omit only for a one-off local test scan not tied to a specific event day.",
     )
     args = parser.parse_args()
 
@@ -96,6 +106,8 @@ def main() -> None:
         kwargs["max_workers"] = args.max_workers
     if args.refresh_every is not None:
         kwargs["refresh_every"] = args.refresh_every
+    if args.day is not None:
+        kwargs["day"] = args.day
 
     start = time.time()
     counters = run_batch_scan(

@@ -39,7 +39,7 @@ def get_session() -> Iterator[Session]:
 # reads/writes against the new model attributes will fail with "no such column". All
 # are nullable and unused by local dev, so backfilling them is a no-op for existing rows.
 _NEW_NULLABLE_COLUMNS: dict[str, list[tuple[str, str]]] = {
-    "photos": [("r2_key", "TEXT"), ("r2_thumbnail_key", "TEXT")],
+    "photos": [("r2_key", "TEXT"), ("r2_thumbnail_key", "TEXT"), ("day", "INTEGER")],
     "clusters": [("r2_thumbnail_key", "TEXT"), ("og", "TEXT")],
     "faces": [("r2_thumbnail_key", "TEXT")],
 }
@@ -52,6 +52,11 @@ def _migrate_add_missing_columns(conn: sqlite3.Connection) -> None:
         for col_name, col_type in columns:
             if col_name not in existing:
                 cursor.execute(f"ALTER TABLE {table} ADD COLUMN {col_name} {col_type}")
+    # Must run after the ALTERs above, not from schema.sql's executescript - an index
+    # on a column that schema.sql's CREATE TABLE IF NOT EXISTS didn't actually create
+    # (because the table already existed from before that column was added) would
+    # fail immediately if created any earlier than this.
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_photos_day ON photos(day)")
     conn.commit()
 
 

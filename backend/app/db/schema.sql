@@ -16,10 +16,17 @@ CREATE TABLE IF NOT EXISTS photos (
   -- scan (scripts/run_batch_scan_cli.py); always NULL for local SQLite dev. Kept in
   -- sync with app/db/models.py so the SQLAlchemy models match this schema exactly.
   r2_key TEXT,
-  r2_thumbnail_key TEXT
+  r2_thumbnail_key TEXT,
+  -- Event day (1, 2, 3, ...), set once per batch-scan run via --day. Nullable -
+  -- older rows and local dev won't have it.
+  day INTEGER
 );
 CREATE INDEX IF NOT EXISTS idx_photos_status ON photos(status);
 CREATE INDEX IF NOT EXISTS idx_photos_path ON photos(path);
+-- idx_photos_day is created in app/db/database.py's migration step, not here: this
+-- script runs (via executescript) against DBs that may already exist from before the
+-- `day` column existed, and CREATE INDEX ... ON photos(day) would fail immediately on
+-- those DBs since the column isn't added until the migration step runs afterward.
 
 CREATE TABLE IF NOT EXISTS clusters (
   id INTEGER PRIMARY KEY,

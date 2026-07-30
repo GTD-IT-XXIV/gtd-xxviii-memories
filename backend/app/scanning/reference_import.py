@@ -3,7 +3,7 @@ import re
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Callable
+from typing import TYPE_CHECKING, Callable
 
 import numpy as np
 from sqlalchemy.orm import Session
@@ -16,6 +16,9 @@ from app.scanning.face_engine import detect_faces
 from app.scanning.heic import register_heif_opener
 from app.scanning.imaging import load_rgb_and_bgr
 from app.scanning.walker import walk_images
+
+if TYPE_CHECKING:
+    from app.storage.r2 import R2Client
 
 logger = logging.getLogger(__name__)
 
@@ -39,8 +42,8 @@ class ImportCounters:
     current_person: str = ""
 
 
-def parse_person(reference_root: str, path: str) -> tuple[str, str] | None:
-    """Parses a reference photo's path into (person_key, display_name).
+def parse_person(reference_root: str, path: str) -> tuple[str, str, str] | None:
+    """Parses a reference photo's path into (person_key, display_name, group_key).
 
     Expects filenames like "audria1.jpg" / "AARON2.jpeg" - a name followed by a
     REQUIRED trailing digit/index - grouped by their immediate parent folder(s) so
@@ -63,17 +66,23 @@ def parse_person(reference_root: str, path: str) -> tuple[str, str] | None:
     group_key = "-".join(rel.parts[:-1]) or "misc"
     display_name = f"{name_part.title()} ({group_key.upper()})"
     person_key = f"{group_key.lower()}/{name_part.lower()}"
-    return person_key, display_name
+    return person_key, display_name, group_key.upper()
 
 
 def import_reference_folder(
     session_factory: Callable[[], Session],
     reference_root: str,
     on_progress: Callable[[ImportCounters], None] | None = None,
+    r2_client: "R2Client | None" = None,
 ) -> ImportCounters:
     """Seeds labeled person clusters directly from a folder of named reference
     photos (e.g. committee member headshots), so those people are auto-recognized
-    during the main library scan instead of needing manual cluster labeling."""
+    during the main library scan instead of needing manual cluster labeling.
+
+    When `r2_client` is given, the representative thumbnail is uploaded to R2
+    (`clusters.r2_thumbnail_key`) instead of local disk - used by the Postgres/R2
+    batch-import CLI. Local single-machine SQLite dev (the default, r2_client=None)
+    is completely unaffected."""
     register_heif_opener()
     counters = ImportCounters()
 
@@ -86,8 +95,8 @@ def import_reference_folder(
         if parsed is None:
             counters.files_skipped_no_pattern += 1
             continue
-        person_key, display_name = parsed
-        by_person.setdefault(person_key, {"display_name": display_name, "files": []})
+        person_key, display_name, group_key = parsed
+        by_person.setdefault(person_key, {"display_name": display_name, "group_key": group_key, "files": []})
         by_person[person_key]["files"].append(f.path)
     counters.people_found = len(by_person)
     if on_progress:
@@ -128,6 +137,7 @@ def import_reference_folder(
             centroid = normalize(np.mean(np.stack(embeddings), axis=0)).astype(np.float32)
             cluster = Cluster(
                 person_name=info["display_name"],
+                og=info["group_key"],
                 centroid=centroid.tobytes(),
                 face_count=len(embeddings),
                 status="labeled",
@@ -135,13 +145,20 @@ def import_reference_folder(
                 updated_at=_now(),
             )
             session.add(cluster)
-            session.flush()  # assign cluster.id for the thumbnail filename
+            session.flush()  # assign cluster.id for the thumbnail filename/key
 
             if best_crop is not None:
                 _, pil_image, bbox = best_crop
-                cluster.representative_thumbnail_path = thumbnails.save_cluster_thumbnail(
-                    pil_image, cluster.id, bbox
-                )
+                if r2_client is not None:
+                    key = f"thumbnails/clusters/{cluster.id}.jpg"
+                    r2_client.upload_bytes(
+                        key, thumbnails.cluster_thumbnail_bytes(pil_image, bbox), content_type="image/jpeg"
+                    )
+                    cluster.r2_thumbnail_key = key
+                else:
+                    cluster.representative_thumbnail_path = thumbnails.save_cluster_thumbnail(
+                        pil_image, cluster.id, bbox
+                    )
 
             counters.people_created += 1
 

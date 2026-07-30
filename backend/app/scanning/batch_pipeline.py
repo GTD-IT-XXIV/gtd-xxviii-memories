@@ -183,6 +183,7 @@ def _write_result(
     counters: BatchScanCounters,
     r2_client: R2Client,
     cluster_index: ClusterIndex,
+    day: int | None,
 ) -> None:
     """Writes one file's Photo/Face rows, uploads its original + thumbnails to R2, and
     incrementally cluster-assigns each face - committing promptly after each
@@ -221,6 +222,9 @@ def _write_result(
         # Re-processing a changed/interrupted file: drop its old faces (cascades via
         # FK) so stale embeddings/clusters don't linger. See resumability note above.
         session.query(Face).filter(Face.photo_id == photo.id).delete()
+
+    if day is not None:
+        photo.day = day
 
     if result.error is not None:
         logger.exception("Failed to process %s", f.path, exc_info=result.error)
@@ -305,6 +309,7 @@ def run_batch_scan(
     should_stop: Callable[[], bool] | None = None,
     max_workers: int = DEFAULT_MAX_WORKERS,
     refresh_every: int = DEFAULT_REFRESH_EVERY,
+    day: int | None = None,
 ) -> BatchScanCounters:
     """Walks scan_root, keeps only the files whose relative-path hash belongs to this
     machine's batch (see belongs_to_batch), detects+embeds faces, uploads originals
@@ -315,6 +320,11 @@ def run_batch_scan(
     Safely re-runnable: already-'processed' files (by relative-path dedup key) are
     skipped without re-decoding or re-uploading; interrupted files are reprocessed
     from scratch on the next run (see _write_result's resumability note).
+
+    `day` (e.g. 1, 2, 3 - the event day this scan_root's photos were taken on, since
+    organizers run one batch scan per day against that day's photo folder) is stamped
+    onto every photo this run creates or reprocesses; pass None to leave it untouched
+    (e.g. a local test scan not tied to a specific event day).
     """
     register_heif_opener()
     counters = BatchScanCounters()
@@ -373,7 +383,7 @@ def run_batch_scan(
                 bf, fut = window.popleft()
                 result = fut.result()
                 counters.current_file = bf.found.path
-                _write_result(session, bf, result, counters, r2_client, cluster_index)
+                _write_result(session, bf, result, counters, r2_client, cluster_index, day)
 
                 if on_progress:
                     on_progress(counters)
