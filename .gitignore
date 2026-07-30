@@ -30,3 +30,9 @@ Thumbs.db
 # photos) - never belongs in version control.
 /committee/
 /TRIAL 2/
+/Self Portrait (File responses)/
+
+# Real student PII (names, Telegram handles, photo uploads) - never belongs in
+# version control regardless of filename; also covers Excel's own lock files.
+*.xlsx
+~$*.xlsx
