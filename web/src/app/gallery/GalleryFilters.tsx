@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 
-type OpenDropdown = "day" | "og" | "face" | null;
+type OpenDropdown = "day" | "og" | null;
 
 /**
  * Deliberately takes the current selection as props (derived server-side from
@@ -30,12 +30,14 @@ export default function GalleryFilters({
   const router = useRouter();
   const [open, setOpen] = useState<OpenDropdown>(null);
   const [faceQuery, setFaceQuery] = useState(selectedFace ?? "");
+  const [faceSuggestionsOpen, setFaceSuggestionsOpen] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     function handleClickOutside(e: MouseEvent) {
       if (containerRef.current && !containerRef.current.contains(e.target as Node)) {
         setOpen(null);
+        setFaceSuggestionsOpen(false);
       }
     }
     document.addEventListener("mousedown", handleClickOutside);
@@ -85,7 +87,7 @@ export default function GalleryFilters({
       if (name) params.set("face", name);
       else params.delete("face");
     });
-    setOpen(null);
+    setFaceSuggestionsOpen(false);
   }
 
   const faceMatches = useMemo(() => {
@@ -98,7 +100,6 @@ export default function GalleryFilters({
 
   const dayLabel = selectedDays.length === 0 ? "Day" : `Day (${selectedDays.length})`;
   const ogLabel = selectedOgs.length === 0 ? "OG" : `OG (${selectedOgs.length})`;
-  const faceLabel = selectedFace ?? "Face";
 
   function toggleOpen(which: OpenDropdown) {
     setOpen((cur) => (cur === which ? null : which));
@@ -157,55 +158,49 @@ export default function GalleryFilters({
       )}
 
       <div className="relative">
-        <button
-          onClick={() => toggleOpen("face")}
-          className={`px-3 py-1.5 rounded border text-xs flex items-center gap-1 max-w-[180px] ${
-            selectedFace
-              ? "bg-indigo-50 border-indigo-300 text-indigo-700"
-              : "bg-white border-gray-300 text-gray-700"
+        <input
+          value={faceQuery}
+          onChange={(e) => {
+            setFaceQuery(e.target.value);
+            setFaceSuggestionsOpen(true);
+          }}
+          onFocus={() => setFaceSuggestionsOpen(true)}
+          placeholder="Search a person's name..."
+          className={`px-3 py-1.5 rounded border text-xs w-56 ${
+            selectedFace ? "bg-indigo-50 border-indigo-300 text-indigo-700" : "bg-white border-gray-300 text-gray-700"
           }`}
-        >
-          <span className="truncate">{faceLabel}</span> <span className="text-[10px] shrink-0">&#9662;</span>
-        </button>
-        {open === "face" && (
-          <div className="absolute z-20 mt-1 border border-gray-200 rounded bg-white shadow-md p-2 w-56">
-            <input
-              value={faceQuery}
-              onChange={(e) => setFaceQuery(e.target.value)}
-              placeholder="Search a person's name..."
-              autoFocus
-              className="w-full border border-gray-300 rounded px-2 py-1 text-xs mb-1"
-            />
-            {selectedFace && (
-              <button
-                onClick={() => {
-                  setFaceQuery("");
-                  selectFace(null);
-                }}
-                className="text-[11px] text-red-600 hover:underline mb-1"
-              >
-                Clear face filter
-              </button>
-            )}
-            <ul className="divide-y max-h-48 overflow-y-auto">
-              {faceMatches.map((name) => (
-                <li key={name}>
-                  <button
-                    onClick={() => {
-                      setFaceQuery(name);
-                      selectFace(name);
-                    }}
-                    className={`w-full text-left px-1 py-1 text-xs hover:bg-gray-50 ${
-                      name === selectedFace ? "font-medium text-indigo-700" : ""
-                    }`}
-                  >
-                    {name}
-                  </button>
-                </li>
-              ))}
-              {faceMatches.length === 0 && <li className="px-1 py-1 text-xs text-gray-400">No matches</li>}
-            </ul>
-          </div>
+        />
+        {selectedFace && (
+          <button
+            onClick={() => {
+              setFaceQuery("");
+              selectFace(null);
+            }}
+            className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-400 hover:text-red-600 text-xs"
+            aria-label="Clear face filter"
+          >
+            &#10005;
+          </button>
+        )}
+        {faceSuggestionsOpen && (
+          <ul className="absolute z-20 mt-1 w-56 border border-gray-200 rounded bg-white shadow-md divide-y max-h-48 overflow-y-auto">
+            {faceMatches.map((name) => (
+              <li key={name}>
+                <button
+                  onClick={() => {
+                    setFaceQuery(name);
+                    selectFace(name);
+                  }}
+                  className={`w-full text-left px-2 py-1 text-xs hover:bg-gray-50 ${
+                    name === selectedFace ? "font-medium text-indigo-700" : ""
+                  }`}
+                >
+                  {name}
+                </button>
+              </li>
+            ))}
+            {faceMatches.length === 0 && <li className="px-2 py-1 text-xs text-gray-400">No matches</li>}
+          </ul>
         )}
       </div>
 
