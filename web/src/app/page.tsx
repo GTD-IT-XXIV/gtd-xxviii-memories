@@ -10,8 +10,14 @@ export default function Home() {
       </p>
       <div className="flex gap-3">
         <Link
-          href="/review"
+          href="/gallery"
           className="px-4 py-2 rounded bg-indigo-600 text-white text-sm"
+        >
+          Browse gallery
+        </Link>
+        <Link
+          href="/review"
+          className="px-4 py-2 rounded border border-gray-300 text-sm"
         >
           Review clusters
         </Link>

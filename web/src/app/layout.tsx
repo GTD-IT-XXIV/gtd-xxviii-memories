@@ -38,6 +38,9 @@ export default async function RootLayout({
         <header className="border-b border-gray-200 bg-white">
           <nav className="max-w-6xl mx-auto px-6 py-3 flex items-center gap-4">
             <span className="font-semibold text-sm">GTD Face Review</span>
+            <Link href="/gallery" className="text-sm text-gray-600 hover:text-gray-900">
+              Gallery
+            </Link>
             <Link href="/review" className="text-sm text-gray-600 hover:text-gray-900">
               Review
             </Link>
