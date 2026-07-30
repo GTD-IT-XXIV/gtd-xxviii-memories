@@ -1,0 +1,20 @@
+fastapi
+uvicorn[standard]
+sqlalchemy>=2.0
+pydantic>=2
+pydantic-settings
+python-multipart
+insightface
+onnxruntime
+numpy
+pillow
+pillow-heif
+stream-zip
+
+# Multi-machine batch scan (scripts/run_batch_scan_cli.py): Postgres driver + R2/S3 client.
+# Not required for local single-machine dev (SQLite + local disk thumbnails).
+# psycopg2-binary (not psycopg v3) so a plain "postgresql://..." DATABASE_URL - the
+# format Neon gives you by default - works with SQLAlchemy's default dialect without
+# needing to rewrite it to "postgresql+psycopg://...".
+psycopg2-binary
+boto3

@@ -1,0 +1,29 @@
+# Backend
+backend/.venv/
+backend/data/
+backend/__pycache__/
+backend/**/__pycache__/
+*.pyc
+.env
+
+# Frontend
+frontend/node_modules/
+frontend/dist/
+
+# Web (Next.js)
+web/node_modules/
+web/.next/
+web/out/
+web/.vercel/
+web/*.tsbuildinfo
+web/.env*
+!web/.env.example
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Personal photo test fixtures (270+ people's reference photos, a friend's event
+# photos) - never belongs in version control.
+/committee/
+/TRIAL 2/
