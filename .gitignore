@@ -23,6 +23,9 @@ web/.env*
 .DS_Store
 Thumbs.db
 
+# Local Claude Code state (lock files etc, machine-local)
+/.claude/
+
 # Personal photo test fixtures (270+ people's reference photos, a friend's event
 # photos) - never belongs in version control.
 /committee/

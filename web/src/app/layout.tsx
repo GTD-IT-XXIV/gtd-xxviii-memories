@@ -1,6 +1,8 @@
 import type { Metadata } from "next";
 import Link from "next/link";
+import { cookies } from "next/headers";
 import { Geist, Geist_Mono } from "next/font/google";
+import { COOKIE_NAME, verifySessionToken } from "@/lib/session";
 import "./globals.css";
 
 const geistSans = Geist({
@@ -18,11 +20,15 @@ export const metadata: Metadata = {
   description: "Face cluster review tool for GTD event photos",
 };
 
-export default function RootLayout({
+export default async function RootLayout({
   children,
 }: Readonly<{
   children: React.ReactNode;
 }>) {
+  const cookieStore = await cookies();
+  const token = cookieStore.get(COOKIE_NAME)?.value;
+  const session = token ? await verifySessionToken(token) : null;
+
   return (
     <html
       lang="en"
@@ -38,6 +44,16 @@ export default function RootLayout({
             <Link href="/persons" className="text-sm text-gray-600 hover:text-gray-900">
               Persons
             </Link>
+            {session && (
+              <form action="/api/auth/logout" method="POST" className="ml-auto">
+                <button
+                  type="submit"
+                  className="text-sm text-gray-600 hover:text-gray-900"
+                >
+                  Log out
+                </button>
+              </form>
+            )}
           </nav>
         </header>
         <main className="flex-1">{children}</main>
