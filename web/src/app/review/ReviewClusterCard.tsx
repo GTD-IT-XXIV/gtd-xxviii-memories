@@ -132,7 +132,13 @@ export default function ReviewClusterCard({
                 </button>
                 <button
                   disabled={mode === "submitting"}
-                  onClick={() => setMode("correcting")}
+                  onClick={() => {
+                    // Default the OG tab to the recommendation's own group, since a
+                    // wrong-name-same-group correction (e.g. right person picked up by
+                    // a slightly different face) is the most likely "No" case.
+                    setActiveOg(cluster.recommendation!.og);
+                    setMode("correcting");
+                  }}
                   className="px-2 py-1 rounded bg-gray-200 text-gray-800 text-xs disabled:opacity-50"
                 >
                   No
