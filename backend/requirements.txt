@@ -18,3 +18,12 @@ stream-zip
 # needing to rewrite it to "postgresql+psycopg://...".
 psycopg2-binary
 boto3
+
+# Some networks (e.g. campus/corporate networks doing TLS inspection) intercept
+# HTTPS with a proxy root CA that's trusted by Windows but not by Python's bundled
+# certifi CA list, causing SSL_CERT_VERIFY_FAILED on every HTTPS call (boto3/R2
+# included) even though the credentials are fine. pip-system-certs patches Python's
+# ssl module at interpreter startup to trust the OS certificate store instead -
+# harmless/no-op on networks that don't do this. Confirmed necessary on the network
+# this was first set up on.
+pip-system-certs
