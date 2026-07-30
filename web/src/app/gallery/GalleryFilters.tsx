@@ -1,7 +1,9 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
+
+type OpenDropdown = "day" | "og" | "face" | null;
 
 /**
  * Deliberately takes the current selection as props (derived server-side from
@@ -26,7 +28,19 @@ export default function GalleryFilters({
   selectedFace: string | null;
 }) {
   const router = useRouter();
+  const [open, setOpen] = useState<OpenDropdown>(null);
   const [faceQuery, setFaceQuery] = useState(selectedFace ?? "");
+  const containerRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    function handleClickOutside(e: MouseEvent) {
+      if (containerRef.current && !containerRef.current.contains(e.target as Node)) {
+        setOpen(null);
+      }
+    }
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, []);
 
   function navigate(mutate: (params: URLSearchParams) => void) {
     const params = new URLSearchParams();
@@ -71,104 +85,133 @@ export default function GalleryFilters({
       if (name) params.set("face", name);
       else params.delete("face");
     });
+    setOpen(null);
   }
 
   const faceMatches = useMemo(() => {
     const q = faceQuery.trim().toLowerCase();
-    if (!q) return [];
+    if (!q) return persons.slice(0, 15);
     return persons.filter((p) => p.toLowerCase().includes(q)).slice(0, 15);
   }, [faceQuery, persons]);
 
   const hasFilters = selectedDays.length > 0 || selectedOgs.length > 0 || !!selectedFace;
 
+  const dayLabel = selectedDays.length === 0 ? "Day" : `Day (${selectedDays.length})`;
+  const ogLabel = selectedOgs.length === 0 ? "OG" : `OG (${selectedOgs.length})`;
+  const faceLabel = selectedFace ?? "Face";
+
+  function toggleOpen(which: OpenDropdown) {
+    setOpen((cur) => (cur === which ? null : which));
+  }
+
   return (
-    <div className="border border-gray-200 rounded-lg bg-white p-4 mb-4 flex flex-col gap-3">
+    <div ref={containerRef} className="flex flex-wrap items-center gap-2 mb-4">
       {days.length > 0 && (
-        <div>
-          <p className="text-xs text-gray-500 mb-1">Day (any of)</p>
-          <div className="flex flex-wrap gap-1">
-            {days.map((d) => (
-              <button
-                key={d}
-                onClick={() => toggleDay(d)}
-                className={`px-2 py-1 rounded border text-xs ${
-                  selectedDays.includes(d)
-                    ? "bg-indigo-600 text-white border-indigo-600"
-                    : "bg-white text-gray-700 border-gray-300"
-                }`}
-              >
-                Day {d}
-              </button>
-            ))}
-          </div>
+        <div className="relative">
+          <button
+            onClick={() => toggleOpen("day")}
+            className={`px-3 py-1.5 rounded border text-xs flex items-center gap-1 ${
+              selectedDays.length > 0
+                ? "bg-indigo-50 border-indigo-300 text-indigo-700"
+                : "bg-white border-gray-300 text-gray-700"
+            }`}
+          >
+            {dayLabel} <span className="text-[10px]">&#9662;</span>
+          </button>
+          {open === "day" && (
+            <div className="absolute z-20 mt-1 border border-gray-200 rounded bg-white shadow-md p-2 flex flex-col gap-1 min-w-[110px]">
+              {days.map((d) => (
+                <label key={d} className="flex items-center gap-2 text-xs cursor-pointer whitespace-nowrap">
+                  <input type="checkbox" checked={selectedDays.includes(d)} onChange={() => toggleDay(d)} />
+                  Day {d}
+                </label>
+              ))}
+            </div>
+          )}
         </div>
       )}
 
       {ogs.length > 0 && (
-        <div>
-          <p className="text-xs text-gray-500 mb-1">OG (any of)</p>
-          <div className="flex flex-wrap gap-1">
-            {ogs.map((og) => (
-              <button
-                key={og}
-                onClick={() => toggleOg(og)}
-                className={`px-2 py-1 rounded border text-xs ${
-                  selectedOgs.includes(og)
-                    ? "bg-indigo-600 text-white border-indigo-600"
-                    : "bg-white text-gray-700 border-gray-300"
-                }`}
-              >
-                {og}
-              </button>
-            ))}
-          </div>
+        <div className="relative">
+          <button
+            onClick={() => toggleOpen("og")}
+            className={`px-3 py-1.5 rounded border text-xs flex items-center gap-1 ${
+              selectedOgs.length > 0
+                ? "bg-indigo-50 border-indigo-300 text-indigo-700"
+                : "bg-white border-gray-300 text-gray-700"
+            }`}
+          >
+            {ogLabel} <span className="text-[10px]">&#9662;</span>
+          </button>
+          {open === "og" && (
+            <div className="absolute z-20 mt-1 border border-gray-200 rounded bg-white shadow-md p-2 flex flex-col gap-1 min-w-[140px] max-h-56 overflow-y-auto">
+              {ogs.map((og) => (
+                <label key={og} className="flex items-center gap-2 text-xs cursor-pointer whitespace-nowrap">
+                  <input type="checkbox" checked={selectedOgs.includes(og)} onChange={() => toggleOg(og)} />
+                  {og}
+                </label>
+              ))}
+            </div>
+          )}
         </div>
       )}
 
-      <div>
-        <p className="text-xs text-gray-500 mb-1">Face (one person)</p>
-        {selectedFace ? (
-          <div className="flex items-center gap-2">
-            <span className="px-2 py-1 rounded bg-indigo-600 text-white text-xs">{selectedFace}</span>
-            <button
-              onClick={() => {
-                setFaceQuery("");
-                selectFace(null);
-              }}
-              className="text-xs text-gray-500 hover:underline"
-            >
-              Clear
-            </button>
-          </div>
-        ) : (
-          <div className="relative max-w-xs">
+      <div className="relative">
+        <button
+          onClick={() => toggleOpen("face")}
+          className={`px-3 py-1.5 rounded border text-xs flex items-center gap-1 max-w-[180px] ${
+            selectedFace
+              ? "bg-indigo-50 border-indigo-300 text-indigo-700"
+              : "bg-white border-gray-300 text-gray-700"
+          }`}
+        >
+          <span className="truncate">{faceLabel}</span> <span className="text-[10px] shrink-0">&#9662;</span>
+        </button>
+        {open === "face" && (
+          <div className="absolute z-20 mt-1 border border-gray-200 rounded bg-white shadow-md p-2 w-56">
             <input
               value={faceQuery}
               onChange={(e) => setFaceQuery(e.target.value)}
               placeholder="Search a person's name..."
-              className="w-full border border-gray-300 rounded px-2 py-1 text-xs"
+              autoFocus
+              className="w-full border border-gray-300 rounded px-2 py-1 text-xs mb-1"
             />
-            {faceMatches.length > 0 && (
-              <ul className="absolute z-10 mt-1 w-full border border-gray-200 rounded bg-white shadow-sm divide-y max-h-48 overflow-y-auto">
-                {faceMatches.map((name) => (
-                  <li key={name}>
-                    <button
-                      onClick={() => selectFace(name)}
-                      className="w-full text-left px-2 py-1 text-xs hover:bg-gray-50"
-                    >
-                      {name}
-                    </button>
-                  </li>
-                ))}
-              </ul>
+            {selectedFace && (
+              <button
+                onClick={() => {
+                  setFaceQuery("");
+                  selectFace(null);
+                }}
+                className="text-[11px] text-red-600 hover:underline mb-1"
+              >
+                Clear face filter
+              </button>
             )}
+            <ul className="divide-y max-h-48 overflow-y-auto">
+              {faceMatches.map((name) => (
+                <li key={name}>
+                  <button
+                    onClick={() => {
+                      setFaceQuery(name);
+                      selectFace(name);
+                    }}
+                    className={`w-full text-left px-1 py-1 text-xs hover:bg-gray-50 ${
+                      name === selectedFace ? "font-medium text-indigo-700" : ""
+                    }`}
+                  >
+                    {name}
+                  </button>
+                </li>
+              ))}
+              {faceMatches.length === 0 && <li className="px-1 py-1 text-xs text-gray-400">No matches</li>}
+            </ul>
           </div>
         )}
       </div>
 
       {hasFilters && (
-        <button onClick={() => router.push("/gallery")} className="text-xs text-red-600 hover:underline self-start">
-          Clear all filters
+        <button onClick={() => router.push("/gallery")} className="text-xs text-red-600 hover:underline">
+          Clear all
         </button>
       )}
     </div>
