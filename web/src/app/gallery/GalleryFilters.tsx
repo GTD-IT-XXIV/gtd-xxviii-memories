@@ -114,15 +114,23 @@ export default function GalleryFilters({
             className={`px-3 py-1.5 rounded border text-xs flex items-center gap-1 ${
               selectedDays.length > 0
                 ? "bg-indigo-50 border-indigo-300 text-indigo-700"
-                : "bg-white border-gray-300 text-gray-700"
+                : "bg-white border-gray-300 text-black"
             }`}
           >
             {dayLabel} <span className="text-[10px]">&#9662;</span>
           </button>
           {open === "day" && (
             <div className="absolute z-20 mt-1 border border-gray-200 rounded bg-white shadow-md p-2 flex flex-col gap-1 min-w-[110px]">
+              <label className="flex items-center gap-2 text-xs cursor-pointer whitespace-nowrap text-black border-b border-gray-100 pb-1 mb-1">
+                <input
+                  type="checkbox"
+                  checked={selectedDays.length === 0}
+                  onChange={() => navigate((params) => params.delete("day"))}
+                />
+                All
+              </label>
               {days.map((d) => (
-                <label key={d} className="flex items-center gap-2 text-xs cursor-pointer whitespace-nowrap">
+                <label key={d} className="flex items-center gap-2 text-xs cursor-pointer whitespace-nowrap text-black">
                   <input type="checkbox" checked={selectedDays.includes(d)} onChange={() => toggleDay(d)} />
                   Day {d}
                 </label>
@@ -139,15 +147,23 @@ export default function GalleryFilters({
             className={`px-3 py-1.5 rounded border text-xs flex items-center gap-1 ${
               selectedOgs.length > 0
                 ? "bg-indigo-50 border-indigo-300 text-indigo-700"
-                : "bg-white border-gray-300 text-gray-700"
+                : "bg-white border-gray-300 text-black"
             }`}
           >
             {ogLabel} <span className="text-[10px]">&#9662;</span>
           </button>
           {open === "og" && (
             <div className="absolute z-20 mt-1 border border-gray-200 rounded bg-white shadow-md p-2 flex flex-col gap-1 min-w-[140px] max-h-56 overflow-y-auto">
+              <label className="flex items-center gap-2 text-xs cursor-pointer whitespace-nowrap text-black border-b border-gray-100 pb-1 mb-1">
+                <input
+                  type="checkbox"
+                  checked={selectedOgs.length === 0}
+                  onChange={() => navigate((params) => params.delete("og"))}
+                />
+                All
+              </label>
               {ogs.map((og) => (
-                <label key={og} className="flex items-center gap-2 text-xs cursor-pointer whitespace-nowrap">
+                <label key={og} className="flex items-center gap-2 text-xs cursor-pointer whitespace-nowrap text-black">
                   <input type="checkbox" checked={selectedOgs.includes(og)} onChange={() => toggleOg(og)} />
                   {og}
                 </label>
@@ -166,8 +182,8 @@ export default function GalleryFilters({
           }}
           onFocus={() => setFaceSuggestionsOpen(true)}
           placeholder="Search a person's name..."
-          className={`px-3 py-1.5 rounded border text-xs w-56 ${
-            selectedFace ? "bg-indigo-50 border-indigo-300 text-indigo-700" : "bg-white border-gray-300 text-gray-700"
+          className={`px-3 py-1.5 rounded border text-xs w-56 placeholder:text-black ${
+            selectedFace ? "bg-indigo-50 border-indigo-300 text-indigo-700" : "bg-white border-gray-300 text-black"
           }`}
         />
         {selectedFace && (
@@ -192,7 +208,7 @@ export default function GalleryFilters({
                     selectFace(name);
                   }}
                   className={`w-full text-left px-2 py-1 text-xs hover:bg-gray-50 ${
-                    name === selectedFace ? "font-medium text-indigo-700" : ""
+                    name === selectedFace ? "font-medium text-indigo-700" : "text-black"
                   }`}
                 >
                   {name}

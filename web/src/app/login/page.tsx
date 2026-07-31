@@ -35,7 +35,7 @@ export default async function LoginPage({
 
   return (
     <div className="max-w-sm mx-auto p-10 flex flex-col items-center gap-4 text-center">
-      <h1 className="text-xl font-semibold">GTD Face Review</h1>
+      <h1 className="text-xl font-semibold">GTD Memories</h1>
       <p className="text-sm text-gray-600">
         Sign in with Telegram to access the gallery. Only pre-approved
         reviewers can log in.

@@ -28,6 +28,16 @@ def main() -> None:
         action="store_true",
         help="Idempotently create Postgres tables from the SQLAlchemy models before importing (safe to pass every run)",
     )
+    parser.add_argument(
+        "--single-photo",
+        action="store_true",
+        help=(
+            "Folder has exactly one reference photo per person, already named after "
+            "them (e.g. 'Aaron Revel.jpg') - skip the trailing-digit/multi-photo-"
+            "grouping convention required for folders like committee/ that also "
+            "contain group/logo photos to filter out."
+        ),
+    )
     args = parser.parse_args()
 
     if not settings.database_url:
@@ -58,7 +68,11 @@ def main() -> None:
 
     start = time.time()
     counters = import_reference_folder(
-        session_factory, args.reference_root, on_progress=on_progress, r2_client=r2_client
+        session_factory,
+        args.reference_root,
+        on_progress=on_progress,
+        r2_client=r2_client,
+        require_trailing_digit=not args.single_photo,
     )
     elapsed = time.time() - start
 

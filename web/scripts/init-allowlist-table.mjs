@@ -33,9 +33,18 @@ const sqlPath = path.join(
   "sql",
   "001_allowed_reviewers.sql"
 );
-const statement = readFileSync(sqlPath, "utf8");
+const script = readFileSync(sqlPath, "utf8");
+// Neon's serverless driver rejects multiple statements in one prepared
+// query, unlike psql/the Neon SQL console - split on statement-terminating
+// semicolons (naive, but fine for this file's simple, comment-only content).
+const statements = script
+  .split(";")
+  .map((s) => s.trim())
+  .filter(Boolean);
 
 const sql = neon(databaseUrl);
-await sql.query(statement);
+for (const statement of statements) {
+  await sql.query(statement);
+}
 
 console.log("allowed_reviewers table is ready.");

@@ -42,7 +42,9 @@ class ImportCounters:
     current_person: str = ""
 
 
-def parse_person(reference_root: str, path: str) -> tuple[str, str, str] | None:
+def parse_person(
+    reference_root: str, path: str, require_trailing_digit: bool = True
+) -> tuple[str, str, str] | None:
     """Parses a reference photo's path into (person_key, display_name, group_key).
 
     Expects filenames like "audria1.jpg" / "AARON2.jpeg" - a name followed by a
@@ -52,12 +54,17 @@ def parse_person(reference_root: str, path: str) -> tuple[str, str, str] | None:
     or logo photo like "BFM_MC.jpg") are treated as non-individual and skipped -
     without this, a random face from a group photo would get misattributed as if it
     were a named individual's reference photo.
+
+    Pass require_trailing_digit=False for a folder that's guaranteed to contain only
+    one individual headshot per person, already named after the person (e.g. a form's
+    self-portrait uploads renamed to "<Full Name>.jpg") - there's no group/logo photo
+    risk to guard against there, and no digit to strip.
     """
     rel = Path(path).relative_to(reference_root)
     stem = rel.stem
-    if not _TRAILING_DIGITS.search(stem):
+    if require_trailing_digit and not _TRAILING_DIGITS.search(stem):
         return None
-    name_part = _TRAILING_DIGITS.sub("", stem).strip("_- ")
+    name_part = (_TRAILING_DIGITS.sub("", stem) if require_trailing_digit else stem).strip("_- ")
     if not name_part:
         return None
     # "-" not "/" as the join separator: person_name flows straight into URL path
@@ -74,6 +81,7 @@ def import_reference_folder(
     reference_root: str,
     on_progress: Callable[[ImportCounters], None] | None = None,
     r2_client: "R2Client | None" = None,
+    require_trailing_digit: bool = True,
 ) -> ImportCounters:
     """Seeds labeled person clusters directly from a folder of named reference
     photos (e.g. committee member headshots), so those people are auto-recognized
@@ -82,7 +90,9 @@ def import_reference_folder(
     When `r2_client` is given, the representative thumbnail is uploaded to R2
     (`clusters.r2_thumbnail_key`) instead of local disk - used by the Postgres/R2
     batch-import CLI. Local single-machine SQLite dev (the default, r2_client=None)
-    is completely unaffected."""
+    is completely unaffected.
+
+    See parse_person's docstring for require_trailing_digit=False."""
     register_heif_opener()
     counters = ImportCounters()
 
@@ -91,7 +101,7 @@ def import_reference_folder(
 
     by_person: dict[str, dict] = {}
     for f in found:
-        parsed = parse_person(reference_root, f.path)
+        parsed = parse_person(reference_root, f.path, require_trailing_digit=require_trailing_digit)
         if parsed is None:
             counters.files_skipped_no_pattern += 1
             continue

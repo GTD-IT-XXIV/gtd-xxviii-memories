@@ -4,11 +4,12 @@ export interface KnownPerson {
   og: string | null;
 }
 
-/** A single unlabeled cluster plus its presigned thumbnail + recommendation, as sent to the client card. */
+/** A single unlabeled cluster plus a handful of its member faces' presigned
+ * thumbnails (for the review-card carousel) + recommendation, as sent to the client card. */
 export interface ReviewClusterViewModel {
   id: number;
   face_count: number;
-  thumbnail_url: string | null;
+  thumbnail_urls: string[];
   recommendation: {
     person_name: string;
     og: string | null;

@@ -3,6 +3,8 @@ import Link from "next/link";
 import { cookies } from "next/headers";
 import { Geist, Geist_Mono } from "next/font/google";
 import { COOKIE_NAME, verifySessionToken } from "@/lib/session";
+import { canReviewerAccessReview } from "@/lib/allowlist";
+import Footer from "@/components/Footer";
 import "./globals.css";
 
 const geistSans = Geist({
@@ -16,7 +18,7 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "GTD Face Review",
+  title: "GTD Memories",
   description: "Face cluster review tool for GTD event photos",
 };
 
@@ -28,6 +30,7 @@ export default async function RootLayout({
   const cookieStore = await cookies();
   const token = cookieStore.get(COOKIE_NAME)?.value;
   const session = token ? await verifySessionToken(token) : null;
+  const canReview = session ? await canReviewerAccessReview(session.telegram_user_id) : false;
 
   return (
     <html
@@ -37,16 +40,15 @@ export default async function RootLayout({
       <body className="min-h-full flex flex-col bg-gray-50 text-gray-900">
         <header className="border-b border-gray-200 bg-white">
           <nav className="max-w-6xl mx-auto px-6 py-3 flex items-center gap-4">
-            <span className="font-semibold text-sm">GTD Face Review</span>
+            <span className="font-semibold text-sm text-black">GTD Memories</span>
             <Link href="/gallery" className="text-sm text-gray-600 hover:text-gray-900">
               Gallery
             </Link>
-            <Link href="/review" className="text-sm text-gray-600 hover:text-gray-900">
-              Review
-            </Link>
-            <Link href="/persons" className="text-sm text-gray-600 hover:text-gray-900">
-              Persons
-            </Link>
+            {canReview && (
+              <Link href="/review" className="text-sm text-gray-600 hover:text-gray-900">
+                Review
+              </Link>
+            )}
             {session && (
               <form action="/api/auth/logout" method="POST" className="ml-auto">
                 <button
@@ -60,6 +62,7 @@ export default async function RootLayout({
           </nav>
         </header>
         <main className="flex-1">{children}</main>
+        <Footer />
       </body>
     </html>
   );

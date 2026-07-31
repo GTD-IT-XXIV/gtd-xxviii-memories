@@ -63,7 +63,7 @@ export async function GET(request: NextRequest) {
 
   const token = await createSessionToken({ telegram_user_id: user.id });
 
-  const response = NextResponse.redirect(new URL("/review", request.url));
+  const response = NextResponse.redirect(new URL("/gallery", request.url));
   response.cookies.set(COOKIE_NAME, token, {
     httpOnly: true,
     secure: process.env.NODE_ENV === "production",

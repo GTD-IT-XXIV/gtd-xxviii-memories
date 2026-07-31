@@ -31,6 +31,13 @@ CREATE TABLE IF NOT EXISTS allowed_reviewers (
   -- Optional human label for admins, e.g. "Audria - BFM lead".
   display_name       TEXT,
 
+  -- Everyone in this table can log in and browse /gallery. Only rows with
+  -- can_review = true can additionally access /review. Two separate access
+  -- levels on one table rather than two tables, since "is this Telegram
+  -- account allowed in at all" and "is this account a reviewer" share the
+  -- exact same identity-matching logic (see lib/allowlist.ts).
+  can_review         BOOLEAN NOT NULL DEFAULT false,
+
   added_at           TIMESTAMPTZ NOT NULL DEFAULT now(),
 
   -- A row must be identifiable by at least one of the two -- otherwise
@@ -38,3 +45,6 @@ CREATE TABLE IF NOT EXISTS allowed_reviewers (
   CONSTRAINT allowed_reviewers_identity_chk
     CHECK (telegram_user_id IS NOT NULL OR telegram_username IS NOT NULL)
 );
+
+-- Idempotent for pre-existing tables created before can_review existed.
+ALTER TABLE allowed_reviewers ADD COLUMN IF NOT EXISTS can_review BOOLEAN NOT NULL DEFAULT false;

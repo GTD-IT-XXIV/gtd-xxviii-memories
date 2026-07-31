@@ -22,16 +22,27 @@ async function postJson(url: string, body?: unknown) {
 export default function ReviewClusterCard({
   cluster,
   knownPersons,
+  onReject,
+  onRemoved,
 }: {
   cluster: ReviewClusterViewModel;
   knownPersons: KnownPerson[];
+  /** Called instead of opening the inline correction UI when "No" is clicked
+   * on a suggested match - lets the parent (folder view) move this cluster
+   * into the "Others" folder rather than correcting it in place. */
+  onReject?: () => void;
+  /** Called once the cluster has been labeled/discarded, so the parent can
+   * drop it from folder counts immediately instead of waiting on router.refresh(). */
+  onRemoved?: () => void;
 }) {
   const router = useRouter();
   const [mode, setMode] = useState<Mode>("idle");
   const [error, setError] = useState<string | null>(null);
+  const [imageIndex, setImageIndex] = useState(0);
   const [search, setSearch] = useState("");
   const [activeOg, setActiveOg] = useState<string | null>(null);
   const [freeText, setFreeText] = useState("");
+  const [confirmingYes, setConfirmingYes] = useState(false);
 
   const ogGroups = useMemo(() => {
     const groups = new Map<string, KnownPerson[]>();
@@ -61,6 +72,7 @@ export default function ReviewClusterCard({
     try {
       await postJson(`/api/clusters/${cluster.id}/name`, { person_name, og });
       setMode("removed");
+      onRemoved?.();
       router.refresh();
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed to save");
@@ -74,6 +86,7 @@ export default function ReviewClusterCard({
     try {
       await postJson(`/api/clusters/${cluster.id}/discard`);
       setMode("removed");
+      onRemoved?.();
       router.refresh();
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed to discard");
@@ -87,16 +100,49 @@ export default function ReviewClusterCard({
     return null;
   }
 
+  const images = cluster.thumbnail_urls;
+  const safeIndex = images.length > 0 ? imageIndex % images.length : 0;
+
+  function prevImage() {
+    setImageIndex((i) => (images.length === 0 ? 0 : (i - 1 + images.length) % images.length));
+  }
+  function nextImage() {
+    setImageIndex((i) => (images.length === 0 ? 0 : (i + 1) % images.length));
+  }
+
   return (
     <div className="border border-gray-200 rounded-lg bg-white p-3 flex flex-col gap-2">
-      <div className="aspect-square bg-gray-100 rounded-md overflow-hidden flex items-center justify-center">
-        {cluster.thumbnail_url ? (
-          // eslint-disable-next-line @next/next/no-img-element
-          <img
-            src={cluster.thumbnail_url}
-            alt="face"
-            className="w-full h-full object-cover"
-          />
+      <div className="relative aspect-square bg-gray-100 rounded-md overflow-hidden flex items-center justify-center">
+        {images.length > 0 ? (
+          <>
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img
+              src={images[safeIndex]}
+              alt="face"
+              className="w-full h-full object-cover"
+            />
+            {images.length > 1 && (
+              <>
+                <button
+                  onClick={prevImage}
+                  aria-label="Previous face"
+                  className="absolute left-1 top-1/2 -translate-y-1/2 w-6 h-6 flex items-center justify-center rounded-full bg-black/50 text-white text-xs hover:bg-black/70"
+                >
+                  &#8249;
+                </button>
+                <button
+                  onClick={nextImage}
+                  aria-label="Next face"
+                  className="absolute right-1 top-1/2 -translate-y-1/2 w-6 h-6 flex items-center justify-center rounded-full bg-black/50 text-white text-xs hover:bg-black/70"
+                >
+                  &#8250;
+                </button>
+                <span className="absolute bottom-1 right-1 text-[10px] bg-black/50 text-white px-1.5 py-0.5 rounded">
+                  {safeIndex + 1}/{images.length}
+                </span>
+              </>
+            )}
+          </>
         ) : (
           <span className="text-gray-400 text-xs">No thumbnail</span>
         )}
@@ -120,12 +166,7 @@ export default function ReviewClusterCard({
               <div className="flex gap-2 mt-1">
                 <button
                   disabled={mode === "submitting"}
-                  onClick={() =>
-                    submitLabel(
-                      cluster.recommendation!.person_name,
-                      cluster.recommendation!.og
-                    )
-                  }
+                  onClick={() => setConfirmingYes(true)}
                   className="px-2 py-1 rounded bg-green-600 text-white text-xs disabled:opacity-50"
                 >
                   Yes
@@ -133,6 +174,10 @@ export default function ReviewClusterCard({
                 <button
                   disabled={mode === "submitting"}
                   onClick={() => {
+                    if (onReject) {
+                      onReject();
+                      return;
+                    }
                     // Default the OG tab to the recommendation's own group, since a
                     // wrong-name-same-group correction (e.g. right person picked up by
                     // a slightly different face) is the most likely "No" case.
@@ -266,6 +311,41 @@ export default function ReviewClusterCard({
           >
             Cancel
           </button>
+        </div>
+      )}
+
+      {confirmingYes && cluster.recommendation && (
+        <div
+          className="fixed inset-0 z-50 bg-black/50 flex items-center justify-center p-6"
+          onClick={() => setConfirmingYes(false)}
+        >
+          <div
+            className="bg-white rounded-lg shadow-xl w-full max-w-sm p-5 flex flex-col gap-4"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <p className="text-sm text-gray-900">
+              Are you sure this is{" "}
+              <span className="font-semibold">{cluster.recommendation.person_name}</span>
+              {cluster.recommendation.og ? ` (${cluster.recommendation.og})` : ""}?
+            </p>
+            <div className="flex justify-end gap-2">
+              <button
+                onClick={() => setConfirmingYes(false)}
+                className="px-3 py-1.5 rounded border border-gray-300 text-sm text-gray-700 hover:bg-gray-50"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={() => {
+                  setConfirmingYes(false);
+                  submitLabel(cluster.recommendation!.person_name, cluster.recommendation!.og);
+                }}
+                className="px-3 py-1.5 rounded bg-green-600 text-white text-sm hover:bg-green-700"
+              >
+                Confirm
+              </button>
+            </div>
+          </div>
         </div>
       )}
     </div>

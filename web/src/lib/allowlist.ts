@@ -3,12 +3,16 @@ import { getSql } from "./db";
 export interface ResolvedReviewer {
   telegramUserId: number;
   displayName: string | null;
+  /** Whether this account can access /review, not just /gallery - see
+   * sql/001_allowed_reviewers.sql. */
+  canReview: boolean;
 }
 
 interface AllowlistIdRow {
   id: number;
   telegram_username: string | null;
   display_name: string | null;
+  can_review: boolean;
 }
 
 /**
@@ -35,7 +39,7 @@ export async function resolveAllowedReviewer(
 
   const byIdRows = await runAllowlistQuery(() =>
     sql`
-      SELECT id, telegram_username, display_name
+      SELECT id, telegram_username, display_name, can_review
       FROM allowed_reviewers
       WHERE telegram_user_id = ${telegramUserId}
       LIMIT 1
@@ -53,7 +57,7 @@ export async function resolveAllowedReviewer(
         WHERE id = ${row.id}
       `;
     }
-    return { telegramUserId, displayName: row.display_name };
+    return { telegramUserId, displayName: row.display_name, canReview: row.can_review };
   }
 
   if (!telegramUsername) {
@@ -62,7 +66,7 @@ export async function resolveAllowedReviewer(
 
   const byUsernameRows = await runAllowlistQuery(() =>
     sql`
-      SELECT id, display_name
+      SELECT id, display_name, can_review
       FROM allowed_reviewers
       WHERE telegram_user_id IS NULL
         AND lower(telegram_username) = lower(${telegramUsername})
@@ -74,7 +78,7 @@ export async function resolveAllowedReviewer(
     return null;
   }
 
-  const match = byUsernameRows[0] as { id: number; display_name: string | null };
+  const match = byUsernameRows[0] as { id: number; display_name: string | null; can_review: boolean };
   await sql`
     UPDATE allowed_reviewers
     SET telegram_user_id = ${telegramUserId},
@@ -82,7 +86,20 @@ export async function resolveAllowedReviewer(
     WHERE id = ${match.id}
   `;
 
-  return { telegramUserId, displayName: match.display_name };
+  return { telegramUserId, displayName: match.display_name, canReview: match.can_review };
+}
+
+/** Looks up whether an already-authenticated Telegram account may access
+ * /review, by numeric id (the only stable identifier - see resolveAllowedReviewer). */
+export async function canReviewerAccessReview(telegramUserId: number): Promise<boolean> {
+  const sql = getSql();
+  const rows = await runAllowlistQuery(
+    () =>
+      sql`
+        SELECT can_review FROM allowed_reviewers WHERE telegram_user_id = ${telegramUserId} LIMIT 1
+      ` as unknown as Promise<{ can_review: boolean }[]>
+  );
+  return rows[0]?.can_review ?? false;
 }
 
 /** Wraps "table doesn't exist" into a message that points at the setup step. */

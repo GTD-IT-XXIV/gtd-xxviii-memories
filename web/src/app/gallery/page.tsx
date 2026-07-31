@@ -2,10 +2,14 @@ import Link from "next/link";
 import { getSql } from "@/lib/db";
 import { presignGetUrls } from "@/lib/r2";
 import GalleryFilters from "./GalleryFilters";
+import PhotoGrid from "./PhotoGrid";
 
 export const dynamic = "force-dynamic";
 
 const PAGE_SIZE = 48;
+
+const ALL_DAYS = [1, 2, 3];
+const ALL_OGS = Array.from({ length: 8 }, (_, i) => `OG${i + 1}`);
 
 interface PhotoRow {
   id: number;
@@ -84,7 +88,7 @@ export default async function GalleryPage({
   const limitIdx = params.length + 1;
   const offsetIdx = params.length + 2;
 
-  const [photoRows, countRows, dayRows, ogRows, personRows] = await Promise.all([
+  const [photoRows, countRows, personRows] = await Promise.all([
     sql.query(
       `SELECT p.id, p.filename, p.taken_at, p.day, p.r2_thumbnail_key, p.r2_key
        FROM photos p
@@ -95,12 +99,6 @@ export default async function GalleryPage({
     ) as unknown as Promise<PhotoRow[]>,
     sql.query(`SELECT COUNT(*)::int AS count FROM photos p WHERE ${whereClause}`, countParams) as unknown as Promise<
       { count: number }[]
-    >,
-    sql`SELECT DISTINCT day FROM photos WHERE day IS NOT NULL ORDER BY day` as unknown as Promise<
-      { day: number }[]
-    >,
-    sql`SELECT DISTINCT og FROM clusters WHERE status = 'labeled' AND og IS NOT NULL ORDER BY og` as unknown as Promise<
-      { og: string }[]
     >,
     sql`SELECT DISTINCT person_name FROM clusters WHERE status = 'labeled' AND person_name IS NOT NULL ORDER BY person_name` as unknown as Promise<
       { person_name: string }[]
@@ -118,34 +116,22 @@ export default async function GalleryPage({
       <p className="text-sm text-gray-500 mb-4">{total} photo(s)</p>
 
       <GalleryFilters
-        days={dayRows.map((r) => r.day)}
-        ogs={ogRows.map((r) => r.og)}
+        days={ALL_DAYS}
+        ogs={ALL_OGS}
         persons={personRows.map((r) => r.person_name)}
         selectedDays={days}
         selectedOgs={ogs}
         selectedFace={face}
       />
 
-      {photoRows.length === 0 ? (
-        <p className="text-sm text-gray-500">No photos match these filters.</p>
-      ) : (
-        <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-3">
-          {photoRows.map((p, i) => (
-            <div
-              key={p.id}
-              className="aspect-square bg-gray-100 rounded-md overflow-hidden flex items-center justify-center"
-              title={p.day ? `Day ${p.day}` : undefined}
-            >
-              {thumbnailUrls[i] ? (
-                // eslint-disable-next-line @next/next/no-img-element
-                <img src={thumbnailUrls[i]!} alt={p.filename} className="w-full h-full object-cover" />
-              ) : (
-                <span className="text-gray-400 text-xs">No image</span>
-              )}
-            </div>
-          ))}
-        </div>
-      )}
+      <PhotoGrid
+        photos={photoRows.map((p, i) => ({
+          id: p.id,
+          filename: p.filename,
+          day: p.day,
+          thumbnailUrl: thumbnailUrls[i],
+        }))}
+      />
 
       {totalPages > 1 && (
         <div className="flex items-center gap-3 mt-6 text-sm">

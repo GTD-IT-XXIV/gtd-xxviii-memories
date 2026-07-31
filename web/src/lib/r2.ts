@@ -60,3 +60,15 @@ export async function presignGetUrls(
 ): Promise<Array<string | null>> {
   return Promise.all(keys.map((key) => presignGetUrl(key)));
 }
+
+/**
+ * Fetches an object's body as a Node Readable stream, for server-side
+ * re-streaming (e.g. bundling several originals into a zip) rather than
+ * generating a client-facing presigned URL.
+ */
+export async function getObjectStream(key: string): Promise<NodeJS.ReadableStream> {
+  const client = getR2Client();
+  const command = new GetObjectCommand({ Bucket: getBucket(), Key: key });
+  const { Body } = await client.send(command);
+  return Body as NodeJS.ReadableStream;
+}
