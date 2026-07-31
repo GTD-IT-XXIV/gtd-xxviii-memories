@@ -33,6 +33,7 @@ interface UnlabeledClusterRow {
   face_count: number;
   r2_thumbnail_key: string | null;
   centroid: Buffer;
+  deferred_to_others: boolean;
 }
 
 interface ClusterFaceRow {
@@ -66,7 +67,7 @@ export default async function ReviewPage() {
 
   const [unlabeledRows, labeledRows, knownPersons] = await Promise.all([
     sql`
-      SELECT id, face_count, r2_thumbnail_key, centroid
+      SELECT id, face_count, r2_thumbnail_key, centroid, deferred_to_others
       FROM clusters
       WHERE status = 'unlabeled'
       ORDER BY face_count DESC, id ASC
@@ -121,7 +122,10 @@ export default async function ReviewPage() {
   const fallbackUrlByKey = new Map(fallbackKeys.map((key, i) => [key, fallbackUrls[i]]));
 
   const clusters: ReviewClusterViewModel[] = unlabeledRows.map((c) => {
-    const match = findBestMatch(c.centroid, decodedLabeled);
+    // Deferred clusters ("Move to Others" on a prior visit) skip matching entirely -
+    // the reviewer already rejected whatever suggestion this would produce, and a
+    // null recommendation is what routes it into OTHERS_KEY below.
+    const match = c.deferred_to_others ? null : findBestMatch(c.centroid, decodedLabeled);
     const faceKeys = facesByCluster.get(c.id);
     const thumbnailUrls = faceKeys
       ? faceKeys.map((key) => faceUrlByKey.get(key)).filter((url): url is string => !!url)
@@ -145,7 +149,8 @@ export default async function ReviewPage() {
   // Bucket by the recommendation's OG - a match with low-but-above-threshold
   // similarity still files under its own OG rather than Others; only clusters
   // with no usable recommendation at all (or whose match has no OG on record)
-  // land in Others.
+  // land in Others. Deferred clusters land here too, via their nulled-out
+  // recommendation above - no separate branch needed for them.
   const folderMap = new Map<string, ReviewClusterViewModel[]>();
   for (const og of ALL_OGS) folderMap.set(og, []);
   folderMap.set(OTHERS_KEY, []);

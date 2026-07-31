@@ -42,7 +42,10 @@ CREATE TABLE IF NOT EXISTS clusters (
   -- r2_thumbnail_key / og: see photos.r2_key comment above re: batch-scan-only /
   -- reference-import-only columns kept in sync with app/db/models.py.
   r2_thumbnail_key TEXT,
-  og TEXT
+  og TEXT,
+  -- Review-UI-only bucketing flag ("Move to Others" on the review page) - never a
+  -- clustering `status` value. See app/db/models.py's Cluster.deferred_to_others.
+  deferred_to_others BOOLEAN NOT NULL DEFAULT 0
 );
 CREATE INDEX IF NOT EXISTS idx_clusters_person_name ON clusters(person_name);
 CREATE INDEX IF NOT EXISTS idx_clusters_status ON clusters(status);

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from sqlalchemy import Float, ForeignKey, Integer, LargeBinary, String, Text
+from sqlalchemy import Boolean, Float, ForeignKey, Integer, LargeBinary, String, Text
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
 
@@ -71,6 +71,12 @@ class Cluster(Base):
     # batch scan itself - this column just needs to exist here so reads/writes from
     # either side don't break.
     og: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # Review-UI-only bucketing flag: reviewer clicked "Move to Others" on the review
+    # page (web/src/app/review) instead of confirming/correcting a suggested match.
+    # Deliberately NOT a `status` value - a deferred cluster must stay "unlabeled" and
+    # fully eligible for future auto-matching (see ClusterIndex.load() in
+    # app/clustering/similarity.py, which filters on status, not this column).
+    deferred_to_others: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
 
     faces: Mapped[list["Face"]] = relationship(back_populates="cluster")
 

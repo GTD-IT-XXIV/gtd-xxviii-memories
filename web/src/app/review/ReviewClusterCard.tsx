@@ -22,17 +22,12 @@ async function postJson(url: string, body?: unknown) {
 export default function ReviewClusterCard({
   cluster,
   knownPersons,
-  onReject,
   onRemoved,
 }: {
   cluster: ReviewClusterViewModel;
   knownPersons: KnownPerson[];
-  /** Called instead of opening the inline correction UI when "No" is clicked
-   * on a suggested match - lets the parent (folder view) move this cluster
-   * into the "Others" folder rather than correcting it in place. */
-  onReject?: () => void;
-  /** Called once the cluster has been labeled/discarded, so the parent can
-   * drop it from folder counts immediately instead of waiting on router.refresh(). */
+  /** Called once the cluster has been labeled/discarded/deferred, so the parent
+   * can drop it from folder counts immediately instead of waiting on router.refresh(). */
   onRemoved?: () => void;
 }) {
   const router = useRouter();
@@ -92,6 +87,20 @@ export default function ReviewClusterCard({
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed to discard");
       setMode("idle");
+    }
+  }
+
+  async function defer() {
+    setError(null);
+    setMode("submitting");
+    try {
+      await postJson(`/api/clusters/${cluster.id}/defer`);
+      setMode("removed");
+      onRemoved?.();
+      router.refresh();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Failed to move to Others");
+      setMode("correcting");
     }
   }
 
@@ -175,10 +184,6 @@ export default function ReviewClusterCard({
                 <button
                   disabled={mode === "submitting"}
                   onClick={() => {
-                    if (onReject) {
-                      onReject();
-                      return;
-                    }
                     // Default the OG tab to the recommendation's own group, since a
                     // wrong-name-same-group correction (e.g. right person picked up by
                     // a slightly different face) is the most likely "No" case.
@@ -306,12 +311,20 @@ export default function ReviewClusterCard({
             </form>
           </div>
 
-          <button
-            onClick={() => setMode("idle")}
-            className="text-gray-500 hover:underline self-start"
-          >
-            Cancel
-          </button>
+          <div className="flex gap-3">
+            <button
+              onClick={() => setMode("idle")}
+              className="text-gray-500 hover:underline self-start"
+            >
+              Cancel
+            </button>
+            <button
+              onClick={defer}
+              className="text-indigo-600 hover:underline self-start"
+            >
+              Move to Others (decide later)
+            </button>
+          </div>
         </div>
       )}
 

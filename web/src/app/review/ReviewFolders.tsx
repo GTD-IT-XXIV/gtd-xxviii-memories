@@ -20,26 +20,14 @@ export default function ReviewFolders({
   knownPersons: KnownPerson[];
 }) {
   const [openFolder, setOpenFolder] = useState<string | null>(null);
-  // Clusters "No"-ed out of an OG folder - shown in Others instead, client-side
-  // only (never persisted; a page refresh recomputes fresh recommendations).
-  const [rejectedIds, setRejectedIds] = useState<Set<number>>(new Set());
-  // Clusters labeled/discarded this session - dropped from folder counts
+  // Clusters labeled/discarded/deferred this session - dropped from folder counts
   // immediately rather than waiting on the next full data refresh.
   const [removedIds, setRemovedIds] = useState<Set<number>>(new Set());
 
   const foldersByKey = useMemo(() => new Map(folders.map((f) => [f.key, f])), [folders]);
 
   function visibleClusters(folderKey: string): ReviewClusterViewModel[] {
-    if (folderKey === OTHERS_KEY) {
-      const ownOthers = foldersByKey.get(OTHERS_KEY)?.clusters ?? [];
-      const rejectedFromOgFolders = folders
-        .filter((f) => f.key !== OTHERS_KEY)
-        .flatMap((f) => f.clusters)
-        .filter((c) => rejectedIds.has(c.id));
-      return [...ownOthers, ...rejectedFromOgFolders].filter((c) => !removedIds.has(c.id));
-    }
-    const clusters = foldersByKey.get(folderKey)?.clusters ?? [];
-    return clusters.filter((c) => !rejectedIds.has(c.id) && !removedIds.has(c.id));
+    return (foldersByKey.get(folderKey)?.clusters ?? []).filter((c) => !removedIds.has(c.id));
   }
 
   function markRemoved(id: number) {
@@ -89,7 +77,6 @@ export default function ReviewFolders({
               key={cluster.id}
               cluster={isOthers ? { ...cluster, recommendation: null } : cluster}
               knownPersons={knownPersons}
-              onReject={isOthers ? undefined : () => setRejectedIds((cur) => new Set(cur).add(cluster.id))}
               onRemoved={() => markRemoved(cluster.id)}
             />
           ))}

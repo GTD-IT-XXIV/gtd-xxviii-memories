@@ -21,6 +21,7 @@ from app.db.models import Base
 # _migrate_add_missing_columns for SQLite - keep both lists in sync.
 _NEW_NULLABLE_COLUMNS: dict[str, list[tuple[str, str]]] = {
     "photos": [("day", "INTEGER")],
+    "clusters": [("deferred_to_others", "BOOLEAN NOT NULL DEFAULT FALSE")],
 }
 
 
