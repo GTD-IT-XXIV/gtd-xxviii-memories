@@ -44,6 +44,24 @@ def _get_app():
     return _analysis_app
 
 
+def _keypoints_within_bbox(
+    kps: np.ndarray, bbox: tuple[float, float, float, float], margin_ratio: float
+) -> bool:
+    """True if all 5 landmarks (eyes, nose, mouth corners) fall within the face's own
+    bbox, padded by margin_ratio on each side. A face with landmarks pushed well
+    outside the box - or missing entirely - means the detector only had a
+    partial/occluded view (e.g. only eyes visible), not a full face worth embedding.
+    A generous margin keeps normally-angled faces (whose 5 points still land roughly
+    within the box) from being affected - see settings.keypoint_bbox_margin_ratio."""
+    x, y, w, h = bbox
+    pad_x, pad_y = w * margin_ratio, h * margin_ratio
+    x0, y0 = x - pad_x, y - pad_y
+    x1, y1 = x + w + pad_x, y + h + pad_y
+    return bool(
+        np.all(kps[:, 0] >= x0) and np.all(kps[:, 0] <= x1) and np.all(kps[:, 1] >= y0) and np.all(kps[:, 1] <= y1)
+    )
+
+
 def _face_sharpness(bgr_image: np.ndarray, bbox: tuple[float, float, float, float]) -> float:
     """Variance of the Laplacian of the face crop - a standard fast blur-detection
     heuristic (sharp edges/in-focus -> high variance, smooth/blurry -> low variance).
@@ -78,6 +96,8 @@ def detect_faces(bgr_image: np.ndarray) -> list[DetectedFace]:
         if min(w, h) < settings.min_face_px:
             continue
         bbox = (float(x1), float(y1), float(w), float(h))
+        if f.kps is None or not _keypoints_within_bbox(f.kps, bbox, settings.keypoint_bbox_margin_ratio):
+            continue
         sharpness = _face_sharpness(bgr_image, bbox)
         if sharpness < settings.min_face_sharpness:
             continue

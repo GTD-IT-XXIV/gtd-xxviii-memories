@@ -37,6 +37,15 @@ class Settings(BaseSettings):
     # the old threshold was disproportionately rejecting small faces in group photos.
     min_face_sharpness: float = 20.0
 
+    # How far outside its own bbox a keypoint (eye/nose/mouth corner) may fall before
+    # the detection is treated as a partial/occluded face rather than a full one -
+    # e.g. only eyes visible would push the mouth-corner keypoints well outside the
+    # box. A generous margin so normally-angled faces (still producing all 5 points
+    # roughly within the box) aren't affected - see min_det_score's comment above for
+    # why this pipeline stays lenient toward angled/partially-occluded group-photo
+    # faces; this filter is only meant to catch genuinely degenerate detections.
+    keypoint_bbox_margin_ratio: float = 0.15
+
     # Source photos (esp. modern phone cameras) can be 4000-8000px wide; InsightFace's
     # detector internally resizes to det_size anyway, so decoding at full resolution
     # first just burns CPU. JPEGs are downscaled during decode itself (libjpeg DCT
