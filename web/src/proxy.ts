@@ -29,8 +29,11 @@ export async function proxy(request: NextRequest) {
 export const config = {
   matcher: [
     // Everything except: the login page itself, the auth Route Handlers
-    // (which must stay reachable while logged out / logging out), and
-    // Next.js's own static/image/favicon assets.
-    "/((?!login|api/auth/telegram/start|api/auth/telegram/callback|api/auth/logout|_next/static|_next/image|favicon.ico).*)",
+    // (which must stay reachable while logged out / logging out), Next.js's
+    // own static/image/favicon assets, and static files served straight out
+    // of public/ (e.g. black_logo.png) - those need to render on /login too
+    // (layout.tsx's Footer is shown there), so they can't be gated behind a
+    // session cookie the visitor doesn't have yet.
+    "/((?!login|api/auth/telegram/start|api/auth/telegram/callback|api/auth/logout|_next/static|_next/image|favicon.ico|.*\\.(?:png|jpg|jpeg|gif|webp|svg|ico)$).*)",
   ],
 };
