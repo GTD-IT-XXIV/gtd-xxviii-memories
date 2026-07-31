@@ -28,9 +28,9 @@ export async function proxy(request: NextRequest) {
 
 export const config = {
   matcher: [
-    // Everything except: the login page itself, the two auth Route
-    // Handlers (which must stay reachable while logged out / logging out),
-    // and Next.js's own static/image/favicon assets.
-    "/((?!login|api/auth/telegram/callback|api/auth/logout|_next/static|_next/image|favicon.ico).*)",
+    // Everything except: the login page itself, the auth Route Handlers
+    // (which must stay reachable while logged out / logging out), and
+    // Next.js's own static/image/favicon assets.
+    "/((?!login|api/auth/telegram/start|api/auth/telegram/callback|api/auth/logout|_next/static|_next/image|favicon.ico).*)",
   ],
 };

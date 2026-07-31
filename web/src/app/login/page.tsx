@@ -1,6 +1,6 @@
-// This page hits the network (Telegram's widget script) and reads
-// searchParams, so there's no benefit to static generation and every
-// benefit to always reflecting the current TELEGRAM_BOT_USERNAME config.
+// This page reads searchParams and reflects the current
+// TELEGRAM_OIDC_CLIENT_ID config, so there's no benefit to static
+// generation.
 export const dynamic = "force-dynamic";
 
 const ERROR_MESSAGES: Record<string, string> = {
@@ -12,11 +12,6 @@ const ERROR_MESSAGES: Record<string, string> = {
     "Telegram login isn't fully configured on this server yet. Contact an admin.",
 };
 
-// Telegram usernames are 5-32 chars, letters/digits/underscore. Validating
-// before interpolating it into a raw <script> tag below is cheap insurance
-// even though the value comes from server config, not user input.
-const VALID_BOT_USERNAME = /^[A-Za-z0-9_]{5,32}$/;
-
 export default async function LoginPage({
   searchParams,
 }: {
@@ -27,11 +22,7 @@ export default async function LoginPage({
     ? (ERROR_MESSAGES[params.error] ?? "Login failed. Please try again.")
     : null;
 
-  const rawBotUsername = process.env.TELEGRAM_BOT_USERNAME;
-  const botUsername =
-    rawBotUsername && VALID_BOT_USERNAME.test(rawBotUsername)
-      ? rawBotUsername
-      : null;
+  const clientConfigured = Boolean(process.env.TELEGRAM_OIDC_CLIENT_ID);
 
   return (
     <div className="max-w-sm mx-auto p-10 flex flex-col items-center gap-4 text-center">
@@ -47,26 +38,21 @@ export default async function LoginPage({
         </p>
       )}
 
-      {botUsername ? (
-        <div
-          // Telegram's widget script renders its own "Log in with
-          // Telegram" button and, on success, navigates the browser to
-          // data-auth-url with the signed payload as query params. No
-          // client-side JS of ours is involved -- the redirect is handled
-          // entirely by Telegram's script and our server-side callback.
-          suppressHydrationWarning
-          dangerouslySetInnerHTML={{
-            __html:
-              `<script async src="https://telegram.org/js/telegram-widget.js?22" ` +
-              `data-telegram-login="${botUsername}" ` +
-              `data-size="large" ` +
-              `data-auth-url="/api/auth/telegram/callback" ` +
-              `data-request-access="write"></script>`,
-          }}
-        />
+      {clientConfigured ? (
+        // Plain top-level navigation (not a popup/iframe) to
+        // /api/auth/telegram/start, which redirects to Telegram's OIDC
+        // authorization endpoint. A real top-level redirect is what lets
+        // Telegram hand off to the installed app on mobile instead of
+        // falling back to a phone-number-only web prompt.
+        <a
+          href="/api/auth/telegram/start"
+          className="inline-flex items-center justify-center rounded-md bg-[#26A5E4] px-4 py-2 text-sm font-medium text-white hover:bg-[#1e96d6]"
+        >
+          Log in with Telegram
+        </a>
       ) : (
         <p className="text-sm text-amber-800 bg-amber-50 border border-amber-200 rounded px-3 py-2">
-          TELEGRAM_BOT_USERNAME is not configured. See README.md for setup
+          TELEGRAM_OIDC_CLIENT_ID is not configured. See README.md for setup
           instructions.
         </p>
       )}

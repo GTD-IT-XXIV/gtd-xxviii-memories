@@ -28,8 +28,8 @@ there are no fallback/mock modes:
   -- Cloudflare R2 credentials. The bucket is private; the app generates
   short-lived (1 hour) presigned GET URLs server-side for every image it
   displays, rather than exposing a public bucket URL.
-- `TELEGRAM_BOT_USERNAME`, `TELEGRAM_BOT_TOKEN`, `SESSION_SECRET` -- gate the
-  whole app behind Telegram login. See "Authentication" below.
+- `TELEGRAM_OIDC_CLIENT_ID`, `TELEGRAM_OIDC_CLIENT_SECRET`, `SESSION_SECRET`
+  -- gate the whole app behind Telegram login. See "Authentication" below.
 
 ## Running locally
 
@@ -44,12 +44,19 @@ Open http://localhost:3000.
 
 ## Authentication
 
-The entire app (every page and API route except `/login` itself and the
-Telegram callback) is gated behind **Telegram Login** -- the official
-["Login with Telegram" web widget](https://core.telegram.org/widgets/login),
-restricted to a predefined allowlist stored in Postgres. There is no
-password / email login; only Telegram accounts an admin has explicitly
+The entire app (every page and API route except `/login` itself and the two
+Telegram auth routes) is gated behind **Telegram Login**, using Telegram's
+[OpenID Connect flow](https://core.telegram.org/widgets/login) (authorization
+code + PKCE), restricted to a predefined allowlist stored in Postgres. There
+is no password / email login; only Telegram accounts an admin has explicitly
 allowed can get in.
+
+This app previously used the legacy `telegram-widget.js` iframe widget
+(HMAC-signed query-string callback); it's since been migrated to the OIDC
+flow, which does a real top-level redirect to Telegram instead of a popup --
+this is also what lets Telegram hand off to the installed Telegram app on
+mobile (an in-app "Confirm" prompt) instead of falling back to typing a
+phone number.
 
 ### 1. One-time: create a Telegram bot (manual prerequisite)
 
@@ -57,18 +64,18 @@ This app does not, and cannot, create the Telegram bot for you. A human
 must do this once via Telegram:
 
 1. Message [@BotFather](https://t.me/BotFather) on Telegram, send `/newbot`,
-   and follow the prompts to create a bot. Note the bot's `@username` and
-   the token BotFather gives you.
-2. Send BotFather `/setdomain` and pick your bot, then give it the exact
-   domain this app is deployed at (e.g. `review.example.com`, no
-   `https://`, no trailing slash). The Login Widget only works on the
-   domain registered this way. For local development you'll need a
-   publicly reachable domain/tunnel (e.g. ngrok) pointed at
-   `localhost:3000`, since Telegram's widget won't talk to plain
+   and follow the prompts to create a bot. Note the bot's `@username`.
+2. Message BotFather again, go to **Bot Settings > Web Login**, and
+   register this app's exact deployed callback URL:
+   `https://<your-domain>/api/auth/telegram/callback` (must be `https://`,
+   no trailing slash beyond the path shown). BotFather then gives you a
+   **Client ID** and **Client Secret** for OIDC. For local development
+   you'll need a publicly reachable domain/tunnel (e.g. ngrok) pointed at
+   `localhost:3000`, since Telegram won't redirect back to plain
    `localhost`.
 3. Set the env vars:
-   - `TELEGRAM_BOT_USERNAME` = the bot's `@username`, without the `@`.
-   - `TELEGRAM_BOT_TOKEN` = the token from BotFather. Server-side secret
+   - `TELEGRAM_OIDC_CLIENT_ID` = the Client ID from that BotFather screen.
+   - `TELEGRAM_OIDC_CLIENT_SECRET` = the Client Secret. Server-side secret
      only -- never exposed to the client.
 
 ### 2. One-time: generate a session secret
@@ -144,20 +151,26 @@ To remove access, delete the row: `DELETE FROM allowed_reviewers WHERE telegram_
 
 ### How it works, briefly
 
-- `/login` embeds Telegram's widget script. On success, Telegram redirects
-  the browser to `GET /api/auth/telegram/callback` with a signed payload
-  (`id`, `username`, `auth_date`, `hash`, ...).
-- That Route Handler verifies the signature server-side using
-  `TELEGRAM_BOT_TOKEN` (HMAC-SHA256 over the sorted fields, constant-time
-  compare, `auth_date` freshness check per Telegram's documented
-  algorithm), then checks `allowed_reviewers`.
+- `/login` links to `GET /api/auth/telegram/start`, which generates a PKCE
+  verifier/challenge pair and a CSRF `state`, stashes them in short-lived
+  `HttpOnly` cookies, and redirects (real top-level navigation, not a
+  popup) to Telegram's `https://oauth.telegram.org/auth` authorization
+  endpoint.
+- On success, Telegram redirects back to `GET /api/auth/telegram/callback`
+  with `code` + `state`. That Route Handler checks `state` against the
+  cookie, then exchanges `code` (plus the PKCE verifier and
+  `TELEGRAM_OIDC_CLIENT_SECRET`) at Telegram's token endpoint for a signed
+  `id_token` (JWT), and verifies that JWT's signature against Telegram's
+  JWKS before trusting any claims in it.
+- Once verified, it checks `allowed_reviewers` using the `id` claim (the
+  numeric Telegram user id).
 - If allowed, it signs a short-lived (7 day) JWT session cookie (`jose`,
   `HttpOnly`, `Secure` in production, `SameSite=Lax`) and redirects to
   `/review`. If not, it redirects to `/login?error=not_authorized` with a
   clear message.
 - `src/proxy.ts` (Next.js 16 renamed `middleware.ts` to `proxy.ts` -- same
   mechanism, see `node_modules/next/dist/docs/.../16-proxy.md`) runs on
-  every request except `/login`, the two auth routes, and Next's static
+  every request except `/login`, the three auth routes, and Next's static
   assets, and redirects to `/login` if the session cookie is missing or
   invalid.
 - `POST /api/auth/logout` clears the cookie; the "Log out" link in the
@@ -165,8 +178,9 @@ To remove access, delete the row: `DELETE FROM allowed_reviewers WHERE telegram_
 
 ## Pages
 
-- `/login` -- Telegram Login Widget. Shows a clear error (e.g. "not
-  authorized") if verification fails or the account isn't on the allowlist.
+- `/login` -- "Log in with Telegram" link (Telegram OIDC). Shows a clear
+  error (e.g. "not authorized") if verification fails or the account isn't
+  on the allowlist.
 - `/review` -- main workflow. Paginated list of `unlabeled` clusters (sorted
   by face count, descending), each with a recommended match against existing
   `labeled` clusters (cosine similarity of centroids, computed server-side
@@ -220,4 +234,6 @@ settings for all environments you deploy (Production/Preview/Development),
 run `npm run db:init-allowlist` once against each database you deploy
 against (or paste `sql/001_allowed_reviewers.sql` into the Neon SQL
 console), and complete the Telegram bot setup in "Authentication" above
-(in particular, `/setdomain` must match the deployed domain exactly).
+(in particular, the callback URL registered in BotFather's Web Login
+settings must match the deployed domain exactly:
+`https://<domain>/api/auth/telegram/callback`).
