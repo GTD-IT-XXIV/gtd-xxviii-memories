@@ -43,6 +43,7 @@ export default function ReviewClusterCard({
   const [activeOg, setActiveOg] = useState<string | null>(null);
   const [freeText, setFreeText] = useState("");
   const [confirmingYes, setConfirmingYes] = useState(false);
+  const [confirmingDiscard, setConfirmingDiscard] = useState(false);
 
   const ogGroups = useMemo(() => {
     const groups = new Map<string, KnownPerson[]>();
@@ -205,7 +206,7 @@ export default function ReviewClusterCard({
 
           <button
             disabled={mode === "submitting"}
-            onClick={discard}
+            onClick={() => setConfirmingDiscard(true)}
             className="text-xs text-red-600 hover:underline self-start disabled:opacity-50"
           >
             Discard (not a person)
@@ -343,6 +344,41 @@ export default function ReviewClusterCard({
                 className="px-3 py-1.5 rounded bg-green-600 text-white text-sm hover:bg-green-700"
               >
                 Confirm
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {confirmingDiscard && (
+        <div
+          className="fixed inset-0 z-50 bg-black/50 flex items-center justify-center p-6"
+          onClick={() => setConfirmingDiscard(false)}
+        >
+          <div
+            className="bg-white rounded-lg shadow-xl w-full max-w-sm p-5 flex flex-col gap-4"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <p className="text-sm text-gray-900">
+              Discard this cluster as not a person? This marks all{" "}
+              <span className="font-semibold">{cluster.face_count}</span> face(s) in it as a
+              false detection.
+            </p>
+            <div className="flex justify-end gap-2">
+              <button
+                onClick={() => setConfirmingDiscard(false)}
+                className="px-3 py-1.5 rounded border border-gray-300 text-sm text-gray-700 hover:bg-gray-50"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={() => {
+                  setConfirmingDiscard(false);
+                  discard();
+                }}
+                className="px-3 py-1.5 rounded bg-red-600 text-white text-sm hover:bg-red-700"
+              >
+                Discard
               </button>
             </div>
           </div>
