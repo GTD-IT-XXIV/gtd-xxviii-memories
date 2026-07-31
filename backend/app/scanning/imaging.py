@@ -1,4 +1,5 @@
 from datetime import datetime
+from typing import IO
 
 import numpy as np
 from PIL import ExifTags, Image, ImageOps
@@ -25,12 +26,19 @@ def read_taken_at(image: Image.Image) -> str | None:
         return None
 
 
-def load_rgb_and_bgr(path: str, max_dim: int | None = None) -> tuple[Image.Image, np.ndarray, tuple[int, int]]:
+def load_rgb_and_bgr(
+    path: str | IO[bytes], max_dim: int | None = None
+) -> tuple[Image.Image, np.ndarray, tuple[int, int]]:
     """Loads an image (JPEG/PNG/HEIC, via the registered pillow_heif opener), applies
     EXIF-orientation correction, and returns the upright PIL RGB image (for
     thumbnailing), a BGR numpy array (the format InsightFace/OpenCV expect for
     detection), and the ORIGINAL (pre-downscale, post-rotation) pixel dimensions for
     storage.
+
+    `path` accepts either a filesystem path (local-disk scan,
+    app/scanning/pipeline.py) or a file-like object such as io.BytesIO (R2-sourced
+    batch scan, app/scanning/batch_pipeline.py's _decode_and_detect_r2) - PIL's
+    Image.open handles both identically, including JPEG draft-mode decoding below.
 
     Many cameras/phones store pixels in raw sensor orientation and rely on an EXIF
     Orientation tag for display rotation; PIL does not apply this automatically, so

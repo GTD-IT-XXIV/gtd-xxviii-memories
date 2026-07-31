@@ -43,7 +43,10 @@ class Photo(Base):
     # imported before this existed, and local single-machine dev, won't have it set.
     day: Mapped[int | None] = mapped_column(Integer, nullable=True)
 
-    faces: Mapped[list["Face"]] = relationship(back_populates="photo", cascade="all, delete-orphan")
+    # No delete cascade: faces (including their embeddings) must survive a photo
+    # being deleted - see faces.photo_id below and app/db/postgres.py's
+    # migrate_faces_photo_id_nullable().
+    faces: Mapped[list["Face"]] = relationship(back_populates="photo")
 
 
 class Cluster(Base):
@@ -76,7 +79,10 @@ class Face(Base):
     __tablename__ = "faces"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
-    photo_id: Mapped[int] = mapped_column(Integer, ForeignKey("photos.id", ondelete="CASCADE"), nullable=False)
+    # Nullable + SET NULL (not CASCADE): a face's embedding/thumbnail must outlive its
+    # source photo being deleted (e.g. the one-off photo-cleanup script) - only the
+    # link back to the photo is severed, not the face row itself.
+    photo_id: Mapped[int | None] = mapped_column(Integer, ForeignKey("photos.id", ondelete="SET NULL"), nullable=True)
     bbox_x: Mapped[float] = mapped_column(Float, nullable=False)
     bbox_y: Mapped[float] = mapped_column(Float, nullable=False)
     bbox_w: Mapped[float] = mapped_column(Float, nullable=False)
@@ -89,7 +95,7 @@ class Face(Base):
     # Populated only by the Postgres/R2 batch scan; left NULL for local SQLite dev.
     r2_thumbnail_key: Mapped[str | None] = mapped_column(Text, nullable=True)
 
-    photo: Mapped["Photo"] = relationship(back_populates="faces")
+    photo: Mapped["Photo | None"] = relationship(back_populates="faces")
     cluster: Mapped["Cluster | None"] = relationship(back_populates="faces")
 
 

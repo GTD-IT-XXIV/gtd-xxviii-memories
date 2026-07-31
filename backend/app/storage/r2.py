@@ -20,6 +20,13 @@ if TYPE_CHECKING:
 
 
 @dataclass(frozen=True)
+class R2Object:
+    key: str
+    size: int
+    last_modified: float  # epoch seconds, for resumability comparisons against Photo.mtime
+
+
+@dataclass(frozen=True)
 class R2Config:
     account_id: str
     access_key_id: str
@@ -77,6 +84,37 @@ class R2Client:
     def upload_bytes(self, key: str, data: bytes, content_type: str | None = None) -> None:
         extra = {"ContentType": content_type} if content_type else {}
         self._s3.put_object(Bucket=self._bucket, Key=key, Body=data, **extra)
+
+    def delete_objects(self, keys: list[str]) -> list[str]:
+        """Batch-deletes objects (S3 DeleteObjects caps at 1000 keys/call, so this
+        chunks). Returns the keys that failed to delete (empty list = all succeeded)
+        instead of raising, so a caller doing a large bulk cleanup can report failures
+        without aborting the whole run partway through."""
+        failed: list[str] = []
+        for i in range(0, len(keys), 1000):
+            chunk = keys[i : i + 1000]
+            resp = self._s3.delete_objects(
+                Bucket=self._bucket,
+                Delete={"Objects": [{"Key": k} for k in chunk], "Quiet": True},
+            )
+            failed.extend(err["Key"] for err in resp.get("Errors", []))
+        return failed
+
+    def download_bytes(self, key: str) -> bytes:
+        resp = self._s3.get_object(Bucket=self._bucket, Key=key)
+        return resp["Body"].read()
+
+    def list_objects(self, prefix: str) -> list[R2Object]:
+        """Lists every object under `prefix`, paginating past S3's 1000-key-per-call
+        cap. Used by the R2-sourced batch scan to enumerate the raw originals a prior
+        upload_originals_to_r2_cli.py run uploaded, in place of walking a local
+        filesystem."""
+        objects: list[R2Object] = []
+        paginator = self._s3.get_paginator("list_objects_v2")
+        for page in paginator.paginate(Bucket=self._bucket, Prefix=prefix):
+            for obj in page.get("Contents", []):
+                objects.append(R2Object(key=obj["Key"], size=obj["Size"], last_modified=obj["LastModified"].timestamp()))
+        return objects
 
     def object_exists(self, key: str) -> bool:
         """Used for resumability: lets a re-run recognize an object it already

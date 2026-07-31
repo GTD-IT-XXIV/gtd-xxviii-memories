@@ -95,6 +95,31 @@ Flags:
 - `--refresh-every` - how often (in files processed) to reload cluster state from the
   DB, to pick up clusters other machines created concurrently (default: 200).
 
+### Alternative: R2-sourced batch scan (skip per-laptop OneDrive downloads)
+
+The flow above requires every laptop to have `--scan-root` locally, which in practice
+has meant every laptop syncing/downloading the whole shared OneDrive folder before
+scanning even its own slice. An alternative that only needs ONE machine to touch
+OneDrive:
+
+```bash
+# Once, on a single machine, after downloading+extracting a OneDrive zip locally:
+.venv/Scripts/python.exe -m scripts.upload_originals_to_r2_cli --source-root "C:\...\day1" --prefix raw/day1
+
+# Then, on each laptop (no OneDrive access needed - pulls straight from R2):
+.venv/Scripts/python.exe -m scripts.run_batch_scan_from_r2_cli --prefix raw/day1 --batch 0 --total-batches 4 --day 1 --init-db
+.venv/Scripts/python.exe -m scripts.run_batch_scan_from_r2_cli --prefix raw/day1 --batch 1 --total-batches 4 --day 1
+.venv/Scripts/python.exe -m scripts.run_batch_scan_from_r2_cli --prefix raw/day1 --batch 2 --total-batches 4 --day 1
+.venv/Scripts/python.exe -m scripts.run_batch_scan_from_r2_cli --prefix raw/day1 --batch 3 --total-batches 4 --day 1
+```
+
+`upload_originals_to_r2_cli.py` is a pure storage bulk-upload (no Postgres, no face
+detection) - resumable, skips keys already in R2. `run_batch_scan_from_r2_cli.py` then
+mirrors `run_batch_scan_cli.py` exactly (same `belongs_to_batch()` partitioning, same
+resumability, same concurrent-clustering safety) except it lists/downloads its batch
+slice from R2 instead of walking a local folder, and reuses the already-uploaded
+original's R2 key directly (`photos.r2_key`) instead of re-uploading it.
+
 ### Splitting algorithm
 
 Each file's batch membership is decided by `belongs_to_batch()`

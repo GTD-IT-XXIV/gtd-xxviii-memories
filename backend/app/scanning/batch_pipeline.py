@@ -8,6 +8,7 @@ Entry point: run_batch_scan(), invoked by scripts/run_batch_scan_cli.py.
 """
 
 import hashlib
+import io
 import logging
 import os
 from collections import deque
@@ -30,7 +31,7 @@ from app.scanning.heic import register_heif_opener
 from app.scanning.imaging import load_rgb_and_bgr, read_taken_at
 from app.scanning.onedrive import is_cloud_placeholder
 from app.scanning.walker import FoundFile, walk_images
-from app.storage.r2 import R2Client, guess_content_type
+from app.storage.r2 import R2Client, R2Object, guess_content_type
 
 logger = logging.getLogger(__name__)
 
@@ -106,6 +107,20 @@ class _BatchFile:
     rel_path: str
 
 
+@dataclass
+class _R2BatchFile:
+    """The R2-sourced counterpart of _BatchFile: `key` is the full R2 object key
+    (prefix + rel_path), `rel_path` is the same stable cross-machine identity used for
+    both batch-partitioning and the photos.path dedup key - the R2 upload
+    (scripts/upload_originals_to_r2_cli.py) preserves the source folder's relative
+    path structure under the prefix, so stripping the prefix recovers it exactly."""
+
+    key: str
+    rel_path: str
+    size_bytes: int
+    mtime: float
+
+
 def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
@@ -141,6 +156,103 @@ def _select_batch_files(scan_root: str, batch: int, total_batches: int) -> tuple
         if belongs_to_batch(rel, batch, total_batches):
             batch_files.append(_BatchFile(found=f, rel_path=rel))
     return batch_files, total_files_seen
+
+
+def _select_batch_files_r2(r2_client: R2Client, prefix: str, batch: int, total_batches: int) -> tuple[list[_R2BatchFile], int]:
+    """R2-sourced counterpart of _select_batch_files: lists objects under `prefix`
+    (uploaded by scripts/upload_originals_to_r2_cli.py) instead of walking a local
+    scan_root, then applies the identical belongs_to_batch() partitioning to the
+    prefix-stripped key."""
+    objects = r2_client.list_objects(prefix)
+    total_files_seen = len(objects)
+    norm_prefix = prefix.rstrip("/") + "/"
+    batch_files: list[_R2BatchFile] = []
+    for obj in objects:
+        if not obj.key.startswith(norm_prefix):
+            continue
+        rel = obj.key[len(norm_prefix) :]
+        if belongs_to_batch(rel, batch, total_batches):
+            batch_files.append(_R2BatchFile(key=obj.key, rel_path=rel, size_bytes=obj.size, mtime=obj.last_modified))
+    return batch_files, total_files_seen
+
+
+def _check_skip_r2(session: Session, bf: _R2BatchFile) -> str | None:
+    """R2-sourced counterpart of _check_skip. No cloud-placeholder concept here (R2
+    objects are always fully present once listed) - only 'unchanged' or None."""
+    existing = session.query(Photo).filter(Photo.path == bf.rel_path).one_or_none()
+    if existing is not None and existing.size_bytes == bf.size_bytes and existing.mtime == bf.mtime and existing.status == "processed":
+        return "unchanged"
+    return None
+
+
+def _decode_and_detect_r2(r2_client: R2Client, key: str) -> _DecodeResult:
+    """R2-sourced counterpart of _decode_and_detect: downloads the object's bytes from
+    R2 (network I/O, releases the GIL like the local version's disk read/libjpeg
+    decode does) instead of reading a local path, then decodes+detects identically.
+    Safe to run in the thread pool alongside other downloads."""
+    try:
+        data = r2_client.download_bytes(key)
+        pil_image, bgr_array, original_size = load_rgb_and_bgr(io.BytesIO(data), max_dim=settings.detect_max_dim)
+        detected = detect_faces(bgr_array)
+        return _DecodeResult(pil_image=pil_image, original_size=original_size, detected=detected, error=None)
+    except Exception as exc:  # noqa: BLE001 - reported to the caller, not raised here
+        return _DecodeResult(pil_image=None, original_size=None, detected=[], error=exc)
+
+
+def _write_result_r2(
+    session: Session,
+    bf: _R2BatchFile,
+    result: _DecodeResult,
+    counters: BatchScanCounters,
+    r2_client: R2Client,
+    cluster_index: ClusterIndex,
+    day: int | None,
+) -> None:
+    """R2-sourced counterpart of _write_result. The original is already sitting in R2
+    (uploaded by scripts/upload_originals_to_r2_cli.py before this scan ever ran), so
+    unlike _write_result there is no original-bytes upload here - photo.r2_key is set
+    directly to the pre-existing key, saving a redundant download+reupload round trip.
+    Everything after that (thumbnail + faces) is identical, via _finish_processed_photo."""
+    existing = session.query(Photo).filter(Photo.path == bf.rel_path).one_or_none()
+    if existing is None:
+        photo = Photo(
+            path=bf.rel_path,
+            filename=_basename(bf.rel_path),
+            size_bytes=bf.size_bytes,
+            mtime=bf.mtime,
+            status="pending",
+            created_at=_now(),
+        )
+        session.add(photo)
+    else:
+        photo = existing
+        photo.size_bytes = bf.size_bytes
+        photo.mtime = bf.mtime
+        # Re-processing a changed/interrupted file: drop its old faces so stale
+        # embeddings/clusters don't linger - see _write_result's resumability note.
+        session.query(Face).filter(Face.photo_id == photo.id).delete()
+
+    if day is not None:
+        photo.day = day
+
+    if result.error is not None:
+        logger.exception("Failed to process %s", bf.key, exc_info=result.error)
+        session.flush()
+        photo.status = "error"
+        photo.error_message = str(result.error)[:500]
+        counters.files_errored += 1
+        session.commit()
+        return
+
+    pil_image = result.pil_image
+    assert pil_image is not None
+    photo.width, photo.height = result.original_size
+    photo.taken_at = read_taken_at(pil_image)
+    photo.r2_key = bf.key
+
+    session.flush()  # assign photo.id
+
+    _finish_processed_photo(session, photo, pil_image, result.detected, counters, r2_client, cluster_index)
 
 
 def _check_skip(session: Session, bf: _BatchFile) -> str | None:
@@ -253,10 +365,6 @@ def _write_result(
         original_key = f"originals/{photo.id}{ext}"
         r2_client.upload_bytes(original_key, original_bytes, content_type=guess_content_type(f.path))
         photo.r2_key = original_key
-
-        thumb_key = f"thumbnails/photos/{photo.id}.jpg"
-        r2_client.upload_bytes(thumb_key, thumbnails.photo_thumbnail_bytes(pil_image), content_type="image/jpeg")
-        photo.r2_thumbnail_key = thumb_key
     except Exception as exc:  # noqa: BLE001 - R2/network failure treated like a decode error
         logger.exception("Failed to upload %s to R2", f.path)
         photo.status = "error"
@@ -265,9 +373,30 @@ def _write_result(
         session.commit()
         return
 
-    counters.faces_detected += len(result.detected)
+    _finish_processed_photo(session, photo, pil_image, result.detected, counters, r2_client, cluster_index)
 
-    for det in result.detected:
+
+def _finish_processed_photo(
+    session: Session,
+    photo: Photo,
+    pil_image: Image.Image,
+    detected: list[DetectedFace],
+    counters: BatchScanCounters,
+    r2_client: R2Client,
+    cluster_index: ClusterIndex,
+) -> None:
+    """Shared tail end of processing one decoded photo, once its original is already
+    stored in R2 (either just-uploaded by _write_result, or pre-existing from a prior
+    upload_originals_to_r2_cli.py run, in _write_result_r2's case): uploads the photo
+    thumbnail, then each detected face's thumbnail + cluster assignment, and marks the
+    photo 'processed'. Identical regardless of where the original came from."""
+    thumb_key = f"thumbnails/photos/{photo.id}.jpg"
+    r2_client.upload_bytes(thumb_key, thumbnails.photo_thumbnail_bytes(pil_image), content_type="image/jpeg")
+    photo.r2_thumbnail_key = thumb_key
+
+    counters.faces_detected += len(detected)
+
+    for det in detected:
         face = Face(
             photo_id=photo.id,
             bbox_x=det.bbox[0],
@@ -395,6 +524,100 @@ def run_batch_scan(
                     # unlabeled cluster for a person another machine already just
                     # created one for. Does not fully close that race (see
                     # assign_face_locked's docstring) - just narrows the window.
+                    cluster_index = ClusterIndex.load(session)
+                    processed_since_refresh = 0
+
+                submit_next()
+
+        if on_progress:
+            on_progress(counters)
+    finally:
+        session.close()
+
+    return counters
+
+
+def run_batch_scan_from_r2(
+    session_factory: Callable[[], Session],
+    r2_client: R2Client,
+    prefix: str,
+    batch: int,
+    total_batches: int,
+    on_progress: Callable[[BatchScanCounters], None] | None = None,
+    should_stop: Callable[[], bool] | None = None,
+    max_workers: int = DEFAULT_MAX_WORKERS,
+    refresh_every: int = DEFAULT_REFRESH_EVERY,
+    day: int | None = None,
+) -> BatchScanCounters:
+    """R2-sourced counterpart of run_batch_scan: instead of walking a local scan_root
+    that every laptop must have synced/downloaded, lists objects already uploaded to
+    R2 under `prefix` (by scripts/upload_originals_to_r2_cli.py, typically run once by
+    a single machine after a manual OneDrive download) and downloads only this
+    machine's batch slice from R2 - same belongs_to_batch() partitioning, same
+    resumability guarantees, same concurrent-multi-machine clustering safety as
+    run_batch_scan. See scripts/run_batch_scan_from_r2_cli.py.
+
+    No is_cloud_placeholder handling here - unlike a local OneDrive Files-On-Demand
+    mount, an object listed by R2 is always fully present, so there's no
+    'skipped_placeholder' status/counter in this path (files_skipped_placeholder stays
+    0 for an R2-sourced run).
+    """
+    register_heif_opener()
+    counters = BatchScanCounters()
+
+    batch_files, total_files_seen = _select_batch_files_r2(r2_client, prefix, batch, total_batches)
+    counters.total_files_seen = total_files_seen
+    counters.files_in_batch = len(batch_files)
+    if on_progress:
+        on_progress(counters)
+
+    session = session_factory()
+    try:
+        cluster_index = ClusterIndex.load(session)
+
+        to_process: list[_R2BatchFile] = []
+        for bf in batch_files:
+            if should_stop is not None and should_stop():
+                session.commit()
+                return counters
+            reason = _check_skip_r2(session, bf)
+            if reason == "unchanged":
+                counters.files_skipped_unchanged += 1
+            else:
+                to_process.append(bf)
+            if on_progress:
+                on_progress(counters)
+        session.commit()
+
+        processed_since_refresh = 0
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            window: deque[tuple[_R2BatchFile, Future]] = deque()
+            it = iter(to_process)
+
+            def submit_next() -> bool:
+                nxt = next(it, None)
+                if nxt is None:
+                    return False
+                window.append((nxt, executor.submit(_decode_and_detect_r2, r2_client, nxt.key)))
+                return True
+
+            for _ in range(max_workers * 2):
+                if not submit_next():
+                    break
+
+            while window:
+                if should_stop is not None and should_stop():
+                    break
+                bf, fut = window.popleft()
+                result = fut.result()
+                counters.current_file = bf.rel_path
+                _write_result_r2(session, bf, result, counters, r2_client, cluster_index, day)
+
+                if on_progress:
+                    on_progress(counters)
+
+                processed_since_refresh += 1
+                if processed_since_refresh >= refresh_every:
                     cluster_index = ClusterIndex.load(session)
                     processed_since_refresh = 0
 

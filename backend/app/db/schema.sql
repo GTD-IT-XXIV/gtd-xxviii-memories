@@ -49,7 +49,9 @@ CREATE INDEX IF NOT EXISTS idx_clusters_status ON clusters(status);
 
 CREATE TABLE IF NOT EXISTS faces (
   id INTEGER PRIMARY KEY,
-  photo_id INTEGER NOT NULL REFERENCES photos(id) ON DELETE CASCADE,
+  -- Nullable + SET NULL, not CASCADE: a face's embedding/thumbnail must survive its
+  -- source photo being deleted (see app/db/postgres.py's migrate_faces_photo_id_nullable).
+  photo_id INTEGER REFERENCES photos(id) ON DELETE SET NULL,
   bbox_x REAL NOT NULL,
   bbox_y REAL NOT NULL,
   bbox_w REAL NOT NULL,

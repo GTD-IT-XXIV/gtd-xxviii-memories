@@ -62,3 +62,55 @@ def init_postgres_db(database_url: str) -> None:
             for col_name, col_type in columns:
                 if col_name not in existing:
                     conn.execute(text(f"ALTER TABLE {table} ADD COLUMN {col_name} {col_type}"))
+
+
+def migrate_faces_photo_id_nullable(database_url: str) -> None:
+    """One-off structural migration (not part of init_postgres_db/_NEW_NULLABLE_COLUMNS
+    since it changes an existing column's nullability/FK behavior, not just adds a
+    column): makes faces.photo_id nullable with ON DELETE SET NULL instead of the
+    original NOT NULL / ON DELETE CASCADE, so a face (embedding + thumbnail) survives
+    its source photo being deleted - see scripts/cleanup_photos_cli.py, the only
+    caller. Matches the nullable/SET NULL shape already declared in app/db/models.py.
+
+    Idempotent: safe to call every run. Checks the live schema before altering
+    anything, so it no-ops once already migrated."""
+    engine = build_postgres_engine(database_url)
+    with engine.begin() as conn:
+        is_nullable = conn.execute(
+            text(
+                "SELECT is_nullable FROM information_schema.columns "
+                "WHERE table_schema = 'public' AND table_name = 'faces' AND column_name = 'photo_id'"
+            )
+        ).scalar_one()
+
+        # confdeltype: 'n' = ON DELETE SET NULL, 'c' = ON DELETE CASCADE, 'a' = NO ACTION.
+        # Joined via pg_attribute/conkey (not information_schema) because
+        # information_schema.referential_constraints doesn't expose delete-rule per
+        # column for a single-column FK lookup as directly as pg_constraint does.
+        fk_row = conn.execute(
+            text(
+                """
+                SELECT con.conname, con.confdeltype
+                FROM pg_constraint con
+                JOIN pg_class rel ON rel.oid = con.conrelid
+                JOIN pg_namespace nsp ON nsp.oid = rel.relnamespace
+                JOIN pg_attribute att ON att.attrelid = con.conrelid AND att.attnum = ANY(con.conkey)
+                WHERE nsp.nspname = 'public' AND rel.relname = 'faces'
+                  AND con.contype = 'f' AND att.attname = 'photo_id'
+                """
+            )
+        ).one_or_none()
+
+        if is_nullable == "YES" and fk_row is not None and fk_row.confdeltype == "n":
+            return  # already migrated
+
+        if fk_row is not None:
+            conn.execute(text(f'ALTER TABLE faces DROP CONSTRAINT "{fk_row.conname}"'))
+        if is_nullable == "NO":
+            conn.execute(text("ALTER TABLE faces ALTER COLUMN photo_id DROP NOT NULL"))
+        conn.execute(
+            text(
+                "ALTER TABLE faces ADD CONSTRAINT faces_photo_id_fkey "
+                "FOREIGN KEY (photo_id) REFERENCES photos(id) ON DELETE SET NULL"
+            )
+        )
