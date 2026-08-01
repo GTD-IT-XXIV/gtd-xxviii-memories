@@ -4,11 +4,6 @@ import { getSql } from "@/lib/db";
 import { presignGetUrls } from "@/lib/r2";
 import { canReviewerAccessReview } from "@/lib/allowlist";
 import { COOKIE_NAME, verifySessionToken } from "@/lib/session";
-import {
-  decodeLabeledClusters,
-  findBestMatch,
-  type LabeledClusterRow,
-} from "@/lib/recommend";
 import type { KnownPerson, ReviewClusterViewModel } from "@/lib/types";
 import ReviewClusterGrid from "./ReviewClusterGrid";
 
@@ -17,8 +12,10 @@ import ReviewClusterGrid from "./ReviewClusterGrid";
 export const dynamic = "force-dynamic";
 
 // Folder cards carry an image carousel + correction UI, heavier than a plain
-// gallery thumbnail - half of gallery's PAGE_SIZE (48) keeps a page digestible.
-const PAGE_SIZE = 24;
+// gallery thumbnail, so smaller than gallery's PAGE_SIZE (48). Deliberately the
+// LCM of every grid breakpoint's column count (2/3/4/5, see ReviewClusterGrid's
+// grid-cols-*) so a full page never leaves a partial last row at any screen size.
+const PAGE_SIZE = 60;
 
 // Per-cluster cap on how many member faces feed the review-card carousel -
 // clusters can have dozens of faces, and presigning/loading all of them just
@@ -39,29 +36,27 @@ function buildReviewHref(folder: string, page: number): string {
   return `/review?${usp.toString()}`;
 }
 
-interface UnlabeledClusterRow {
+interface FolderCountRow {
+  folder: string;
+  cnt: number;
+}
+
+interface BucketedCountRow {
+  cnt: number;
+}
+
+interface BucketedRow {
   id: number;
   face_count: number;
   r2_thumbnail_key: string | null;
-  centroid: Buffer;
-  deferred_to_others: boolean;
+  suggested_person_name: string | null;
+  suggested_og: string | null;
+  suggested_similarity: number | null;
 }
 
 interface ClusterFaceRow {
   cluster_id: number;
   r2_thumbnail_key: string;
-}
-
-// Lightweight per-cluster data produced by the bucketing pass below - deliberately
-// NOT carrying thumbnails yet, so every navigation can afford to re-run this over
-// every unlabeled cluster (cheap: a plain O(labeled) dot-product scan per cluster,
-// see recommend.ts) without paying for face-thumbnail fetches/R2 presigning until
-// we know exactly which page of which folder is actually being rendered.
-interface LightCluster {
-  id: number;
-  face_count: number;
-  r2_thumbnail_key: string | null;
-  recommendation: ReviewClusterViewModel["recommendation"];
 }
 
 export default async function ReviewPage({
@@ -96,66 +91,31 @@ export default async function ReviewPage({
 
   const sql = getSql();
 
-  const [unlabeledRows, labeledRows, knownPersons] = await Promise.all([
-    // No LIMIT here - folder membership only exists after the bucketing pass
-    // below runs in JS (it's not a stored/indexed column), so a SQL-level cap
-    // would silently truncate whichever clusters happen to sort last, cutting
-    // them out of every folder rather than just paginating one. See the note
-    // above LightCluster and below the bucketing loop for how this stays cheap
-    // even uncapped, and where that stops being true.
-    sql`
-      SELECT id, face_count, r2_thumbnail_key, centroid, deferred_to_others
-      FROM clusters
-      WHERE status = 'unlabeled'
-      ORDER BY face_count DESC, id ASC
-    ` as unknown as Promise<UnlabeledClusterRow[]>,
-    sql`
-      SELECT id, person_name, og, centroid
-      FROM clusters
-      WHERE status = 'labeled' AND person_name IS NOT NULL
-    ` as unknown as Promise<LabeledClusterRow[]>,
-    sql`
-      SELECT person_name, MAX(og) AS og
-      FROM clusters
-      WHERE status = 'labeled' AND person_name IS NOT NULL
-      GROUP BY person_name
-      ORDER BY person_name
-    ` as unknown as Promise<KnownPerson[]>,
-  ]);
-
-  const decodedLabeled = decodeLabeledClusters(labeledRows);
-
-  // Bucketing pass: reruns in full on every navigation (folder switch AND every
-  // Prev/Next click), since a cluster's folder isn't stored anywhere - it's
-  // recomputed here every time. Measured cheap at low thousands of unlabeled
-  // clusters (matches recommend.ts's own note); at roughly 5,000+ unlabeled
-  // clusters this starts costing low seconds of synchronous work per request
-  // (~labeled-count dot products per unlabeled cluster). If that threshold is
-  // ever reached, the fix is a materialized `clusters.suggested_og` column
-  // populated by the Python pipeline, or a short-TTL cache - not needed yet.
-  const folderMap = new Map<string, LightCluster[]>();
-  for (const key of VALID_FOLDER_KEYS) folderMap.set(key, []);
-
-  for (const c of unlabeledRows) {
-    // Deferred clusters ("Move to Others" on a prior visit) skip matching
-    // entirely - the reviewer already rejected whatever suggestion this would
-    // produce, and a null recommendation is what routes it into Others below.
-    const match = c.deferred_to_others ? null : findBestMatch(c.centroid, decodedLabeled);
-    const recommendation = match
-      ? { person_name: match.person_name, og: match.og, similarity: match.similarity }
-      : null;
-    const bucket = recommendation?.og && folderMap.has(recommendation.og) ? recommendation.og : OTHERS_KEY;
-    folderMap.get(bucket)!.push({
-      id: c.id,
-      face_count: c.face_count,
-      r2_thumbnail_key: c.r2_thumbnail_key,
-      recommendation,
-    });
-  }
-
-  const totalUnlabeled = unlabeledRows.length;
-
+  // Folder membership is derived from a materialized suggestion
+  // (clusters.suggested_cluster_id -> app/clustering/suggestions.py on the backend)
+  // via a query-time join, not recomputed here - a cluster's folder is "the OG of
+  // its suggested match", or Others if deferred/unsuggested/an unknown OG. Using an
+  // FK (not denormalized name/og text) means a later rename or merge/discard of the
+  // suggested cluster is reflected immediately, never stale.
   if (!requestedFolder) {
+    // knownPersons (search/OG-tab picker data) isn't needed on this screen at all -
+    // only the folder-detail screen below renders ReviewClusterGrid/Card, which is
+    // the only consumer of it.
+    const folderCounts = await (sql`
+      SELECT
+        CASE WHEN c.deferred_to_others THEN 'OTHERS'
+             WHEN s.og = ANY(${ALL_OGS}::text[]) THEN s.og
+             ELSE 'OTHERS' END AS folder,
+        COUNT(*)::int AS cnt
+      FROM clusters c
+      LEFT JOIN clusters s ON s.id = c.suggested_cluster_id AND s.status = 'labeled'
+      WHERE c.status = 'unlabeled'
+      GROUP BY 1
+    ` as unknown as Promise<FolderCountRow[]>);
+
+    const countByFolder = new Map(folderCounts.map((r) => [r.folder, r.cnt]));
+    const totalUnlabeled = folderCounts.reduce((sum, r) => sum + r.cnt, 0);
+
     return (
       <div className="max-w-6xl mx-auto p-6">
         <h1 className="text-xl font-semibold mb-1">Review faces</h1>
@@ -175,7 +135,7 @@ export default async function ReviewPage({
               >
                 <span className="text-3xl">&#128193;</span>
                 <span className="font-medium text-sm">{folderLabel(key)}</span>
-                <span className="text-xs text-gray-500">{folderMap.get(key)!.length} to review</span>
+                <span className="text-xs text-gray-500">{countByFolder.get(key) ?? 0} to review</span>
               </Link>
             ))}
           </div>
@@ -184,13 +144,64 @@ export default async function ReviewPage({
     );
   }
 
-  const folderClusters = folderMap.get(requestedFolder)!;
-  const total = folderClusters.length;
+  // sql`...` (the tagged-template form used everywhere else on this page) executes
+  // immediately and isn't a composable fragment - it can't be built once and reused
+  // across the count/rows queries below. Use sql.query(text, params) instead (the
+  // same parameterized-dynamic-SQL pattern gallery/page.tsx already establishes),
+  // with the shared CTE text as a plain string and every value - including the
+  // validated `requestedFolder` - still passed positionally, never interpolated
+  // into the query text itself.
+  const bucketedCte = `
+    WITH bucketed AS (
+      SELECT c.id, c.face_count, c.r2_thumbnail_key, c.suggested_similarity,
+             s.person_name AS suggested_person_name, s.og AS suggested_og,
+             CASE WHEN c.deferred_to_others THEN 'OTHERS'
+                  WHEN s.og = ANY($1::text[]) THEN s.og
+                  ELSE 'OTHERS' END AS folder
+      FROM clusters c
+      LEFT JOIN clusters s ON s.id = c.suggested_cluster_id AND s.status = 'labeled'
+      WHERE c.status = 'unlabeled'
+    )
+  `;
+
+  // Count first, then clamp the requested page before computing the offset for the
+  // rows query below - two sequential round trips (not parallelizable, the second
+  // depends on the first), but both are indexed/CTE-scoped and sub-10ms; the thing
+  // being replaced was a multi-second in-memory brute-force scan, so this is still a
+  // large net win.
+  const [countRows, knownPersons] = await Promise.all([
+    sql.query(`${bucketedCte} SELECT COUNT(*)::int AS cnt FROM bucketed WHERE folder = $2`, [
+      ALL_OGS,
+      requestedFolder,
+    ]) as unknown as Promise<BucketedCountRow[]>,
+    sql`
+      SELECT person_name, MAX(og) AS og
+      FROM clusters
+      WHERE status = 'labeled' AND person_name IS NOT NULL
+      GROUP BY person_name
+      ORDER BY person_name
+    ` as unknown as Promise<KnownPerson[]>,
+  ]);
+
+  const total = countRows[0]?.cnt ?? 0;
   const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
   const page = Math.min(requestedPage, totalPages);
   const offset = (page - 1) * PAGE_SIZE;
-  const pageSlice = folderClusters.slice(offset, offset + PAGE_SIZE);
-  const pageIds = pageSlice.map((c) => c.id);
+
+  const bucketedRows =
+    total === 0
+      ? []
+      : ((await sql.query(
+          `${bucketedCte}
+           SELECT id, face_count, r2_thumbnail_key, suggested_person_name, suggested_og, suggested_similarity
+           FROM bucketed
+           WHERE folder = $2
+           ORDER BY face_count DESC, id ASC
+           LIMIT $3 OFFSET $4`,
+          [ALL_OGS, requestedFolder, PAGE_SIZE, offset]
+        )) as unknown as BucketedRow[]);
+
+  const pageIds = bucketedRows.map((r) => r.id);
 
   const clusterFaceRows =
     pageIds.length === 0
@@ -217,13 +228,13 @@ export default async function ReviewPage({
 
   // Fallback for the rare cluster with no linked face-thumbnail rows: the
   // cluster's own representative thumbnail.
-  const fallbackKeys = pageSlice
+  const fallbackKeys = bucketedRows
     .filter((c) => !facesByCluster.has(c.id) && c.r2_thumbnail_key)
     .map((c) => c.r2_thumbnail_key!);
   const fallbackUrls = await presignGetUrls(fallbackKeys);
   const fallbackUrlByKey = new Map(fallbackKeys.map((key, i) => [key, fallbackUrls[i]]));
 
-  const pageClusters: ReviewClusterViewModel[] = pageSlice.map((c) => {
+  const pageClusters: ReviewClusterViewModel[] = bucketedRows.map((c) => {
     const faceKeys = facesByCluster.get(c.id);
     const thumbnailUrls = faceKeys
       ? faceKeys.map((key) => faceUrlByKey.get(key)).filter((url): url is string => !!url)
@@ -234,9 +245,12 @@ export default async function ReviewPage({
       id: c.id,
       face_count: c.face_count,
       thumbnail_urls: thumbnailUrls,
-      // Others is a catch-all (no recommendation, or a recommendation whose OG
-      // isn't one of the known 8) - don't show a "suggested match" for either case.
-      recommendation: requestedFolder === OTHERS_KEY ? null : c.recommendation,
+      // Others is a catch-all (deferred, no suggestion, or a suggestion whose OG
+      // isn't one of the known 8) - don't show a "suggested match" for any of those.
+      recommendation:
+        requestedFolder !== OTHERS_KEY && c.suggested_person_name && c.suggested_similarity !== null
+          ? { person_name: c.suggested_person_name, og: c.suggested_og, similarity: c.suggested_similarity }
+          : null,
     };
   });
 
