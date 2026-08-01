@@ -8,7 +8,8 @@
     "start": "next start",
     "lint": "eslint",
     "db:init-allowlist": "node --env-file=.env.local scripts/init-allowlist-table.mjs",
-    "db:add-reviewer": "node --env-file=.env.local scripts/add-reviewer.mjs"
+    "db:add-reviewer": "node --env-file=.env.local scripts/add-reviewer.mjs",
+    "db:add-viewer": "node --env-file=.env.local scripts/add-viewer.mjs"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1098.0",
