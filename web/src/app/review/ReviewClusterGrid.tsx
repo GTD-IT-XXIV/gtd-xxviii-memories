@@ -7,9 +7,12 @@ import ReviewClusterCard from "./ReviewClusterCard";
 export default function ReviewClusterGrid({
   clusters,
   knownPersons,
+  defaultOg,
 }: {
   clusters: ReviewClusterViewModel[];
   knownPersons: KnownPerson[];
+  /** Folder being reviewed, preselected in each card's "new name" OG picker. */
+  defaultOg?: string | null;
 }) {
   // Clusters labeled/discarded/deferred this session - dropped from the grid
   // immediately rather than waiting on the next full data refresh. Remounted
@@ -34,6 +37,7 @@ export default function ReviewClusterGrid({
           key={cluster.id}
           cluster={cluster}
           knownPersons={knownPersons}
+          defaultOg={defaultOg}
           onRemoved={() => markRemoved(cluster.id)}
         />
       ))}

@@ -19,13 +19,20 @@ async function postJson(url: string, body?: unknown) {
   return res.json();
 }
 
+const ALL_OGS = Array.from({ length: 8 }, (_, i) => `OG${i + 1}`);
+
 export default function ReviewClusterCard({
   cluster,
   knownPersons,
+  defaultOg,
   onRemoved,
 }: {
   cluster: ReviewClusterViewModel;
   knownPersons: KnownPerson[];
+  /** OG to preselect in the free-text "new name" form - the folder currently being
+   * reviewed, since a cluster filed under OGn is overwhelmingly likely to be someone
+   * from OGn. Null in the Others folder, where there's no such signal. */
+  defaultOg?: string | null;
   /** Called once the cluster has been labeled/discarded/deferred, so the parent
    * can drop it from folder counts immediately instead of waiting on router.refresh(). */
   onRemoved?: () => void;
@@ -37,6 +44,7 @@ export default function ReviewClusterCard({
   const [search, setSearch] = useState("");
   const [activeOg, setActiveOg] = useState<string | null>(null);
   const [freeText, setFreeText] = useState("");
+  const [freeTextOg, setFreeTextOg] = useState<string>(defaultOg ?? "");
   const [confirmingYes, setConfirmingYes] = useState(false);
   const [confirmingDiscard, setConfirmingDiscard] = useState(false);
 
@@ -292,7 +300,9 @@ export default function ReviewClusterCard({
               className="flex gap-1"
               onSubmit={(e) => {
                 e.preventDefault();
-                if (freeText.trim()) submitLabel(freeText.trim(), null);
+                // Empty select value means "no OG" - send null, matching what the
+                // route already normalizes a blank string to anyway.
+                if (freeText.trim()) submitLabel(freeText.trim(), freeTextOg || null);
               }}
             >
               <input
@@ -301,6 +311,19 @@ export default function ReviewClusterCard({
                 placeholder="New person's name"
                 className="flex-1 min-w-0 border border-gray-300 rounded px-2 py-1"
               />
+              <select
+                value={freeTextOg}
+                onChange={(e) => setFreeTextOg(e.target.value)}
+                aria-label="OG for the new person"
+                className="border border-gray-300 rounded px-1 py-1 bg-white"
+              >
+                <option value="">No OG</option>
+                {ALL_OGS.map((og) => (
+                  <option key={og} value={og}>
+                    {og}
+                  </option>
+                ))}
+              </select>
               <button
                 type="submit"
                 disabled={!freeText.trim()}

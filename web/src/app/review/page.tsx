@@ -270,6 +270,9 @@ export default async function ReviewPage({
           key={`${requestedFolder}-${page}`}
           clusters={pageClusters}
           knownPersons={knownPersons}
+          // OTHERS is a catch-all bucket, not an OG - there's no folder-implied
+          // group to preselect there, so leave the picker on "No OG".
+          defaultOg={requestedFolder === OTHERS_KEY ? null : requestedFolder}
         />
       )}
 
