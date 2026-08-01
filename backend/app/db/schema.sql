@@ -45,7 +45,11 @@ CREATE TABLE IF NOT EXISTS clusters (
   og TEXT,
   -- Review-UI-only bucketing flag ("Move to Others" on the review page) - never a
   -- clustering `status` value. See app/db/models.py's Cluster.deferred_to_others.
-  deferred_to_others BOOLEAN NOT NULL DEFAULT 0
+  deferred_to_others BOOLEAN NOT NULL DEFAULT 0,
+  -- Materialized best labeled match, only meaningful while status = 'unlabeled'.
+  -- See app/db/models.py's Cluster.suggested_cluster_id.
+  suggested_cluster_id INTEGER REFERENCES clusters(id),
+  suggested_similarity REAL
 );
 CREATE INDEX IF NOT EXISTS idx_clusters_person_name ON clusters(person_name);
 CREATE INDEX IF NOT EXISTS idx_clusters_status ON clusters(status);

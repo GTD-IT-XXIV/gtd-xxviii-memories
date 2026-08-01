@@ -40,7 +40,13 @@ def get_session() -> Iterator[Session]:
 # are nullable and unused by local dev, so backfilling them is a no-op for existing rows.
 _NEW_NULLABLE_COLUMNS: dict[str, list[tuple[str, str]]] = {
     "photos": [("r2_key", "TEXT"), ("r2_thumbnail_key", "TEXT"), ("day", "INTEGER")],
-    "clusters": [("r2_thumbnail_key", "TEXT"), ("og", "TEXT"), ("deferred_to_others", "BOOLEAN NOT NULL DEFAULT 0")],
+    "clusters": [
+        ("r2_thumbnail_key", "TEXT"),
+        ("og", "TEXT"),
+        ("deferred_to_others", "BOOLEAN NOT NULL DEFAULT 0"),
+        ("suggested_cluster_id", "INTEGER REFERENCES clusters(id)"),
+        ("suggested_similarity", "REAL"),
+    ],
     "faces": [("r2_thumbnail_key", "TEXT")],
 }
 

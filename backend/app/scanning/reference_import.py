@@ -9,6 +9,7 @@ import numpy as np
 from sqlalchemy.orm import Session
 
 from app.clustering.similarity import normalize
+from app.clustering.suggestions import recompute_all_suggestions
 from app.config import settings
 from app.db.models import Cluster
 from app.scanning import thumbnails
@@ -180,6 +181,14 @@ def import_reference_folder(
         session.commit()
         if on_progress:
             on_progress(counters)
+
+        # New labeled clusters just landed above - every existing unlabeled cluster's
+        # stored suggestion (app/clustering/suggestions.py) may now be stale relative
+        # to them, since suggestions are otherwise only refreshed incrementally as
+        # individual clusters' centroids change during scanning. This is an offline,
+        # already multi-minute CLI process, so a full recompute here is cheap by
+        # comparison and keeps every caller of this function correct automatically.
+        recompute_all_suggestions(session)
     finally:
         session.close()
 

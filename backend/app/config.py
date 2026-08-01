@@ -62,6 +62,12 @@ class Settings(BaseSettings):
     # 0.65 because single-reference-photo centroids often sat just below that bar
     # for genuine matches, pushing real matches into the review queue unnecessarily.
     cluster_join_threshold: float = 0.58
+    # Much lower bar than cluster_join_threshold: "worth suggesting to a human
+    # reviewer on the review page" rather than "confidently auto-join". Stored on an
+    # unlabeled cluster as suggested_cluster_id/suggested_similarity (see
+    # app/clustering/suggestions.py) - single source of truth for this bar now that
+    # web/'s former client-side copy (RECOMMENDATION_THRESHOLD) has been removed.
+    cluster_suggestion_threshold: float = 0.3
 
     # Thumbnails
     photo_thumb_max_dim: int = 480

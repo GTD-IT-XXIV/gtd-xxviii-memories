@@ -5,6 +5,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.clustering.similarity import ClusterIndex
+from app.clustering.suggestions import compute_suggestion
 from app.config import settings
 from app.db.models import Cluster, Face
 
@@ -46,8 +47,21 @@ def assign_face(session: Session, index: ClusterIndex, face: Face) -> Cluster:
         cluster.updated_at = _now()
         face.cluster_id = cluster.id
         index.upsert(cluster.id, new_centroid.astype(np.float32))
+        if cluster.status == "unlabeled":
+            # Refresh the suggestion against the cluster's POST-update centroid (its
+            # overall best match), not the single face's raw embedding above.
+            suggestion = compute_suggestion(index, new_centroid)
+            cluster.suggested_cluster_id, cluster.suggested_similarity = (
+                suggestion if suggestion is not None else (None, None)
+            )
         return cluster
 
+    # Reaching here means labeled_match (if any) was below cluster_join_threshold -
+    # exactly the range cluster_suggestion_threshold gates on, so it doubles as this
+    # new cluster's initial suggestion without any extra matching work.
+    suggestion = (
+        labeled_match if labeled_match is not None and labeled_match[1] >= settings.cluster_suggestion_threshold else None
+    )
     cluster = Cluster(
         person_name=None,
         centroid=embedding.astype(np.float32).tobytes(),
@@ -55,6 +69,8 @@ def assign_face(session: Session, index: ClusterIndex, face: Face) -> Cluster:
         status="unlabeled",
         representative_face_id=face.id,
         representative_thumbnail_path=face.thumbnail_path,
+        suggested_cluster_id=suggestion[0] if suggestion is not None else None,
+        suggested_similarity=suggestion[1] if suggestion is not None else None,
         created_at=_now(),
         updated_at=_now(),
     )
@@ -114,12 +130,25 @@ def assign_face_locked(session: Session, index: ClusterIndex, face: Face) -> Clu
             cluster.updated_at = _now()
             face.cluster_id = cluster.id
             index.upsert(cluster.id, new_centroid.astype(np.float32))
+            if cluster.status == "unlabeled":
+                # Refresh against the cluster's POST-update centroid (its overall
+                # best match), not the single face's raw embedding above.
+                suggestion = compute_suggestion(index, new_centroid)
+                cluster.suggested_cluster_id, cluster.suggested_similarity = (
+                    suggestion if suggestion is not None else (None, None)
+                )
             return cluster
         # Cluster vanished (merged/discarded by another machine or a reviewer) between
         # the in-memory index lookup and taking the lock - fall through and create a
         # new cluster instead of crashing.
         index.remove(cluster_id)
 
+    # Reaching here means labeled_match (if any) was below cluster_join_threshold -
+    # exactly the range cluster_suggestion_threshold gates on, so it doubles as this
+    # new cluster's initial suggestion without any extra matching work.
+    suggestion = (
+        labeled_match if labeled_match is not None and labeled_match[1] >= settings.cluster_suggestion_threshold else None
+    )
     cluster = Cluster(
         person_name=None,
         centroid=embedding.astype(np.float32).tobytes(),
@@ -128,6 +157,8 @@ def assign_face_locked(session: Session, index: ClusterIndex, face: Face) -> Clu
         representative_face_id=face.id,
         representative_thumbnail_path=face.thumbnail_path,
         r2_thumbnail_key=face.r2_thumbnail_key,
+        suggested_cluster_id=suggestion[0] if suggestion is not None else None,
+        suggested_similarity=suggestion[1] if suggestion is not None else None,
         created_at=_now(),
         updated_at=_now(),
     )

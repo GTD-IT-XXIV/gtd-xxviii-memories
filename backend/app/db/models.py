@@ -77,6 +77,19 @@ class Cluster(Base):
     # fully eligible for future auto-matching (see ClusterIndex.load() in
     # app/clustering/similarity.py, which filters on status, not this column).
     deferred_to_others: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    # Materialized "best labeled match" for an unlabeled cluster, so the review page
+    # (web/src/app/review) can query/paginate with plain SQL instead of recomputing a
+    # brute-force cosine scan against every labeled cluster on every request. An FK
+    # (not denormalized name/og columns) so a rename or merge/discard of the
+    # suggested cluster is reflected live via the query-time join, never stale. Kept
+    # in sync at scan time (app/clustering/incremental.py) and via a bulk recompute
+    # after reference imports add new labeled clusters (app/clustering/suggestions.py)
+    # - only meaningful while status = 'unlabeled'; see cluster_suggestion_threshold
+    # in app/config.py for the bar a match must clear to be stored at all.
+    suggested_cluster_id: Mapped[int | None] = mapped_column(
+        Integer, ForeignKey("clusters.id", ondelete="SET NULL"), nullable=True
+    )
+    suggested_similarity: Mapped[float | None] = mapped_column(Float, nullable=True)
 
     faces: Mapped[list["Face"]] = relationship(back_populates="cluster")
 
