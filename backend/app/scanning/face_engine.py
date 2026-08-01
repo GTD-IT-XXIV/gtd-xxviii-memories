@@ -79,10 +79,31 @@ def _face_sharpness(bgr_image: np.ndarray, bbox: tuple[float, float, float, floa
     return float(cv2.Laplacian(gray, cv2.CV_64F).var())
 
 
+def _face_brightness(bgr_image: np.ndarray, bbox: tuple[float, float, float, float]) -> float:
+    """Mean V (value/brightness) of the face crop in HSV, 0-255. Uses the same fixed-size
+    resize as _face_sharpness so the two metrics are measured over identical pixels, and
+    so the score isn't skewed by how large the crop is.
+
+    Separate from sharpness on purpose: variance-of-Laplacian scales with contrast and so
+    already partly tracks brightness (+0.297 correlation, measured on 1806 real faces).
+    Folding darkness into the blur score would count it twice and mislabel underexposed
+    but in-focus faces as blurry - see settings.min_face_brightness."""
+    img_h, img_w = bgr_image.shape[:2]
+    x, y, w, h = bbox
+    x0, y0 = max(0, int(x)), max(0, int(y))
+    x1, y1 = min(img_w, int(x + w)), min(img_h, int(y + h))
+    if x1 <= x0 or y1 <= y0:
+        return 0.0
+    crop = bgr_image[y0:y1, x0:x1]
+    crop = cv2.resize(crop, (_SHARPNESS_CROP_SIZE, _SHARPNESS_CROP_SIZE), interpolation=cv2.INTER_AREA)
+    return float(cv2.cvtColor(crop, cv2.COLOR_BGR2HSV)[:, :, 2].mean())
+
+
 def detect_faces(bgr_image: np.ndarray) -> list[DetectedFace]:
     """Run detection + embedding on an image already loaded as a BGR numpy array
     (the format InsightFace/OpenCV expect). Filters out low-confidence, too-small,
-    and out-of-focus/blurry detections per configured thresholds.
+    partial/occluded (keypoints outside the bbox), out-of-focus/blurry, and
+    underexposed detections per configured thresholds.
     """
     app = _get_app()
     raw_faces = app.get(bgr_image)
@@ -100,6 +121,8 @@ def detect_faces(bgr_image: np.ndarray) -> list[DetectedFace]:
             continue
         sharpness = _face_sharpness(bgr_image, bbox)
         if sharpness < settings.min_face_sharpness:
+            continue
+        if _face_brightness(bgr_image, bbox) < settings.min_face_brightness:
             continue
         embedding = f.normed_embedding.astype(np.float32)
         results.append(

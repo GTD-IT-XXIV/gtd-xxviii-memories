@@ -32,10 +32,31 @@ class Settings(BaseSettings):
     # size), a standard fast blur-detection heuristic - lower variance means fewer
     # sharp edges means blurrier. Tuned empirically against real event photos;
     # tune lower to keep more marginal faces, higher to be stricter about focus.
-    # Lowered from 35 because upscaling a genuinely small (but in-focus) crop up to
-    # the fixed measurement size naturally reads as "less sharp" than a larger face -
-    # the old threshold was disproportionately rejecting small faces in group photos.
-    min_face_sharpness: float = 20.0
+    #
+    # Raised back to 35 after measuring the GTD XXVIII library: at 20.0 this rejected
+    # essentially nothing (the whole population of 1806 sampled unlabeled faces sat
+    # above it - p10 ~30, p25 ~47), so thousands of unusable motion-smeared and
+    # out-of-focus faces reached the manual review queue. It had been lowered from 35
+    # on the theory that upscaling small in-focus crops reads as "less sharp"; the
+    # sampled data does not bear that out strongly enough to justify keeping the
+    # filter inert, and min_face_px already guards the genuinely tiny faces.
+    #
+    # A CLAHE-equalized variant of this metric was evaluated and REJECTED - see the
+    # note in scripts/refilter_low_quality_cli.py. It has a smaller exposure bias but
+    # discriminates worse: at matched rejection rates it keeps soft faces and rejects
+    # sharp ones (especially profiles). Plain variance-of-Laplacian won both
+    # directions of that comparison.
+    min_face_sharpness: float = 35.0
+
+    # Underexposed face rejection: mean V (value) of the face crop in HSV, 0-255,
+    # measured on the same fixed-size resize as min_face_sharpness. Faces lost in
+    # shadow produce poor embeddings and are not identifiable by a human reviewer
+    # either, but nothing rejected them before this existed - the sampled library had
+    # near-black crops (mean V in the teens) sitting in the review queue with high
+    # det_score. Deliberately a SEPARATE filter from sharpness rather than folded into
+    # it: variance-of-Laplacian already correlates with brightness (+0.297 measured),
+    # so darkness must be judged on its own terms instead of being counted twice.
+    min_face_brightness: float = 40.0
 
     # How far outside its own bbox a keypoint (eye/nose/mouth corner) may fall before
     # the detection is treated as a partial/occluded face rather than a full one -
