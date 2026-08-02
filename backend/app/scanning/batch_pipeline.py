@@ -394,6 +394,11 @@ def _finish_processed_photo(
     r2_client.upload_bytes(thumb_key, thumbnails.photo_thumbnail_bytes(pil_image), content_type="image/jpeg")
     photo.r2_thumbnail_key = thumb_key
 
+    # Mid-size preview for the gallery lightbox (see settings.photo_preview_max_dim).
+    preview_key = f"previews/photos/{photo.id}.jpg"
+    r2_client.upload_bytes(preview_key, thumbnails.photo_preview_bytes(pil_image), content_type="image/jpeg")
+    photo.r2_preview_key = preview_key
+
     counters.faces_detected += len(detected)
 
     for det in detected:

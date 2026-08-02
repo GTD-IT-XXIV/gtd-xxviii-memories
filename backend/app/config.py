@@ -94,6 +94,24 @@ class Settings(BaseSettings):
     photo_thumb_max_dim: int = 480
     face_thumb_size: int = 160
 
+    # Mid-size preview served when a gallery thumbnail is clicked. The 480px grid
+    # thumbnail looks soft blown up to a lightbox, but serving the untouched original
+    # instead means 8-15MB per click on phones at an event. This sits between them:
+    # ~200-400KB, sharp at full-screen on any realistic display.
+    #
+    # Deliberately generated here rather than by next/image on the web side. Routing
+    # originals through Vercel's image optimizer would re-introduce exactly the origin
+    # transfer that presigning the gallery download removed, and would additionally
+    # burn Vercel's capped image-transformation quota. Generated once at scan time and
+    # served straight from R2 (whose egress is free), it costs one extra GET per view.
+    #
+    # Measured on real event photos at 1600px/q85: ~242KB average (194-268KB), 7-19x
+    # smaller than the originals, ~0.5GB of R2 storage for a ~1900-photo library.
+    photo_preview_max_dim: int = 1600
+    # Slightly higher than the grid thumbnail's 80 - this one is viewed full-screen,
+    # where JPEG artifacts around faces are actually visible.
+    photo_preview_quality: int = 85
+
     # Scan pipeline
     commit_batch_size: int = 50
     image_extensions: tuple[str, ...] = (

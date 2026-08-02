@@ -17,6 +17,7 @@ interface PhotoRow {
   taken_at: string | null;
   day: number | null;
   r2_thumbnail_key: string | null;
+  r2_preview_key: string | null;
   r2_key: string | null;
 }
 
@@ -90,7 +91,7 @@ export default async function GalleryPage({
 
   const [photoRows, countRows, personRows] = await Promise.all([
     sql.query(
-      `SELECT p.id, p.filename, p.taken_at, p.day, p.r2_thumbnail_key, p.r2_key
+      `SELECT p.id, p.filename, p.taken_at, p.day, p.r2_thumbnail_key, p.r2_preview_key, p.r2_key
        FROM photos p
        WHERE ${whereClause}
        ORDER BY p.taken_at DESC NULLS LAST, p.id DESC
@@ -108,7 +109,15 @@ export default async function GalleryPage({
   const total = countRows[0]?.count ?? 0;
   const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
 
-  const thumbnailUrls = await presignGetUrls(photoRows.map((p) => p.r2_thumbnail_key ?? p.r2_key));
+  // Presigning is a local SigV4 computation with no network round trip, so signing a
+  // preview URL for every photo on the page costs effectively nothing even though most
+  // are never clicked. The browser only fetches a preview when the lightbox opens.
+  // Falls back to the thumbnail for photos scanned before previews existed (until
+  // scripts/backfill_photo_previews_cli.py has run for them).
+  const [thumbnailUrls, previewUrls] = await Promise.all([
+    presignGetUrls(photoRows.map((p) => p.r2_thumbnail_key ?? p.r2_key)),
+    presignGetUrls(photoRows.map((p) => p.r2_preview_key ?? p.r2_thumbnail_key ?? p.r2_key)),
+  ]);
 
   return (
     <div className="max-w-6xl mx-auto p-6">
@@ -130,6 +139,7 @@ export default async function GalleryPage({
           filename: p.filename,
           day: p.day,
           thumbnailUrl: thumbnailUrls[i],
+          previewUrl: previewUrls[i],
         }))}
       />
 

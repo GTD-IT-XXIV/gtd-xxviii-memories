@@ -7,6 +7,9 @@ export interface GalleryPhoto {
   filename: string;
   day: number | null;
   thumbnailUrl: string | null;
+  /** Mid-size image for the lightbox. Falls back to the thumbnail server-side when a
+   * photo predates previews, so this is never sharper-but-missing. */
+  previewUrl: string | null;
 }
 
 export default function PhotoGrid({ photos }: { photos: GalleryPhoto[] }) {
@@ -19,6 +22,15 @@ export default function PhotoGrid({ photos }: { photos: GalleryPhoto[] }) {
   const [finishedCount, setFinishedCount] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [previewPhoto, setPreviewPhoto] = useState<GalleryPhoto | null>(null);
+  const [previewLoaded, setPreviewLoaded] = useState(false);
+
+  /** Opening a lightbox always starts from "preview not yet loaded", so the blurred
+   * thumbnail placeholder shows again rather than the previous photo's loaded state
+   * leaking into the next one. */
+  function openPreview(photo: GalleryPhoto) {
+    setPreviewLoaded(false);
+    setPreviewPhoto(photo);
+  }
 
   useEffect(() => {
     if (!previewPhoto) return;
@@ -112,8 +124,9 @@ export default function PhotoGrid({ photos }: { photos: GalleryPhoto[] }) {
         setDownloadProgress({ done: i, total: files.length });
         const a = document.createElement("a");
         a.href = file.url;
-        // Only a hint: `download` is ignored for cross-origin URLs, so R2's
-        // own Content-Disposition decides the saved name. Harmless to set.
+        // The signed URL already carries Content-Disposition: attachment (set
+        // server-side), which is what actually forces the save - this attribute
+        // is ignored cross-origin. Kept only as a same-origin fallback.
         a.download = file.filename;
         document.body.appendChild(a);
         a.click();
@@ -219,7 +232,7 @@ export default function PhotoGrid({ photos }: { photos: GalleryPhoto[] }) {
                   src={p.thumbnailUrl}
                   alt={p.filename}
                   className="w-full h-full object-cover cursor-pointer"
-                  onClick={() => setPreviewPhoto(p)}
+                  onClick={() => openPreview(p)}
                 />
               ) : (
                 <span className="text-gray-400 text-xs">No image</span>
@@ -241,13 +254,28 @@ export default function PhotoGrid({ photos }: { photos: GalleryPhoto[] }) {
           >
             &#10005;
           </button>
-          {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img
-            src={previewPhoto.thumbnailUrl}
-            alt={previewPhoto.filename}
-            className="max-w-[90vw] max-h-[90vh] object-contain rounded shadow-lg"
-            onClick={(e) => e.stopPropagation()}
-          />
+          <div className="relative" onClick={(e) => e.stopPropagation()}>
+            {/* The already-cached grid thumbnail renders instantly, upscaled and soft,
+                and the sharp preview fades in on top once it arrives. Without this the
+                lightbox is empty for as long as the ~300KB preview takes on mobile. */}
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img
+              src={previewPhoto.thumbnailUrl}
+              alt=""
+              aria-hidden="true"
+              className="max-w-[90vw] max-h-[90vh] object-contain rounded shadow-lg blur-[2px]"
+            />
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img
+              key={previewPhoto.id}
+              src={previewPhoto.previewUrl ?? previewPhoto.thumbnailUrl}
+              alt={previewPhoto.filename}
+              onLoad={() => setPreviewLoaded(true)}
+              className={`absolute inset-0 w-full h-full object-contain rounded shadow-lg transition-opacity duration-200 ${
+                previewLoaded ? "opacity-100" : "opacity-0"
+              }`}
+            />
+          </div>
         </div>
       )}
     </div>

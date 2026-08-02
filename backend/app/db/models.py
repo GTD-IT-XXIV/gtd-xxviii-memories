@@ -37,6 +37,12 @@ class Photo(Base):
     # (which keeps serving originals/thumbnails straight from local disk).
     r2_key: Mapped[str | None] = mapped_column(Text, nullable=True)
     r2_thumbnail_key: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # Mid-size preview (settings.photo_preview_max_dim) served when a gallery
+    # thumbnail is clicked, so the lightbox doesn't have to either upscale the 480px
+    # thumbnail or download the multi-MB original. Nullable: photos scanned before
+    # this existed have no preview until scripts/backfill_photo_previews_cli.py runs,
+    # and the gallery falls back to the thumbnail when it's NULL.
+    r2_preview_key: Mapped[str | None] = mapped_column(Text, nullable=True)
     # Event day this photo was taken on (1, 2, 3, ...), set once per batch-scan run
     # via --day (see scripts/run_batch_scan_cli.py) - the whole run's photos share one
     # day, since organizers scan one day's folder at a time. Nullable: older rows

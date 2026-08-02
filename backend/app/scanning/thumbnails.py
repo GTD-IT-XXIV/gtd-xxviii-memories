@@ -32,6 +32,26 @@ def photo_thumbnail_bytes(image: Image.Image) -> bytes:
     return _image_to_jpeg_bytes(_photo_thumbnail_image(image), quality=80)
 
 
+def photo_preview_bytes(image: Image.Image) -> bytes:
+    """Mid-size JPEG for the gallery's click-to-enlarge preview - see
+    settings.photo_preview_max_dim for why this exists separately from both the 480px
+    grid thumbnail and the untouched original.
+
+    `image` is the pipeline's decoded copy. Note that is NOT reliably capped at
+    detect_max_dim: load_rgb_and_bgr's draft() downscale applies only to JPEGs and only
+    snaps to libjpeg's power-of-two DCT ratios, so sources frequently arrive at full
+    resolution (measured: 8064x6048 originals decoding untouched). That is harmless
+    here - it just means the preview is downscaled from more pixels, which is if
+    anything better quality.
+
+    thumbnail() is a no-op when the source is already smaller than the target, which is
+    the desired behaviour for small source photos - better to store a slightly small
+    preview than to upscale one."""
+    preview = image.copy()
+    preview.thumbnail((settings.photo_preview_max_dim, settings.photo_preview_max_dim))
+    return _image_to_jpeg_bytes(preview, quality=settings.photo_preview_quality)
+
+
 def _crop_face(image: Image.Image, bbox: tuple[float, float, float, float]) -> Image.Image:
     x, y, w, h = bbox
     img_w, img_h = image.size

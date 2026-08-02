@@ -20,7 +20,7 @@ from app.db.models import Base
 # these need adding explicitly (idempotent). Mirrors app/db/database.py's
 # _migrate_add_missing_columns for SQLite - keep both lists in sync.
 _NEW_NULLABLE_COLUMNS: dict[str, list[tuple[str, str]]] = {
-    "photos": [("day", "INTEGER")],
+    "photos": [("day", "INTEGER"), ("r2_preview_key", "TEXT")],
     "clusters": [
         ("deferred_to_others", "BOOLEAN NOT NULL DEFAULT FALSE"),
         ("suggested_cluster_id", "INTEGER REFERENCES clusters(id) ON DELETE SET NULL"),
