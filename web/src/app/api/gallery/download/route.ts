@@ -71,12 +71,17 @@ export async function POST(request: Request) {
   const nameFor = uniqueNamer();
   // Signing is a local SigV4 computation with no network round trip, so doing
   // 500 of them in one request is cheap (same reasoning as presignGetUrls).
+  //
+  // The filename is passed to the presigner so the signed URL carries
+  // Content-Disposition: attachment. That is what actually forces a download:
+  // an <a download> attribute does nothing on a cross-origin URL, so without it
+  // clicking a single photo just opens the JPEG in the tab. It also means the
+  // deduped name computed here is the name the user gets.
   const files = await Promise.all(
-    rows.map(async (row) => ({
-      id: row.id,
-      filename: nameFor(row.filename),
-      url: await presignGetUrl(row.r2_key),
-    }))
+    rows.map(async (row) => {
+      const filename = nameFor(row.filename);
+      return { id: row.id, filename, url: await presignGetUrl(row.r2_key, filename) };
+    })
   );
 
   return Response.json({ files: files.filter((f) => f.url !== null) });

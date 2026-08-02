@@ -40,13 +40,44 @@ function getBucket(): string {
   return cachedBucket;
 }
 
-/** Presigns a single R2 object key for a short-lived GET, or returns null for a null/empty key. */
+/** RFC 5987 encoding for a filename in a Content-Disposition header: percent-encodes
+ * everything outside a conservative safe set, so non-ASCII and quotes/semicolons in a
+ * photo's filename can't break (or inject into) the header. */
+function encodeFilename(filename: string): string {
+  return encodeURIComponent(filename).replace(/['()*]/g, (c) => "%" + c.charCodeAt(0).toString(16).toUpperCase());
+}
+
+/**
+ * Presigns a single R2 object key for a short-lived GET, or returns null for a
+ * null/empty key.
+ *
+ * Pass `downloadFilename` to make the browser SAVE the object instead of displaying
+ * it. This is not cosmetic: an <a download> attribute is silently ignored for
+ * cross-origin URLs, so without this a presigned image URL just navigates the tab to
+ * the JPEG and renders it. `ResponseContentDisposition` is signed into the URL and
+ * makes R2 itself return `Content-Disposition: attachment`, which does force a
+ * download - and carries the filename, which the ignored `download` attribute could
+ * not.
+ */
 export async function presignGetUrl(
-  key: string | null | undefined
+  key: string | null | undefined,
+  downloadFilename?: string
 ): Promise<string | null> {
   if (!key) return null;
   const client = getR2Client();
-  const command = new GetObjectCommand({ Bucket: getBucket(), Key: key });
+  const command = new GetObjectCommand({
+    Bucket: getBucket(),
+    Key: key,
+    ...(downloadFilename
+      ? {
+          // Both forms: `filename` for older clients, `filename*` for correct
+          // handling of non-ASCII names (which Indonesian filenames may contain).
+          ResponseContentDisposition:
+            `attachment; filename="${downloadFilename.replace(/["\\]/g, "")}"; ` +
+            `filename*=UTF-8''${encodeFilename(downloadFilename)}`,
+        }
+      : {}),
+  });
   return getSignedUrl(client, command, { expiresIn: PRESIGN_EXPIRY_SECONDS });
 }
 
