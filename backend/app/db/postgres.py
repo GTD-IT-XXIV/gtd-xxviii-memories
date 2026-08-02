@@ -30,11 +30,35 @@ _NEW_NULLABLE_COLUMNS: dict[str, list[tuple[str, str]]] = {
 
 
 def build_postgres_engine(database_url: str) -> Engine:
-    # pool_pre_ping guards against a pooled connection going stale mid-run (e.g.
-    # Neon's serverless autosuspend/idle-connection termination) by testing it with a
-    # cheap round-trip before handing it out, transparently reconnecting if needed -
-    # important for a scan that can run for a long time against a serverless DB.
-    return create_engine(database_url, future=True, pool_pre_ping=True)
+    # pool_pre_ping tests a pooled connection with a cheap round-trip before handing it
+    # out, transparently reconnecting if Neon's serverless backend dropped it while
+    # idle in the pool.
+    #
+    # pre_ping alone is NOT enough for the batch scan, though: it only checks at
+    # CHECKOUT time. The scan holds one session open across its whole photo loop, and
+    # between two DB statements it decodes an image, runs InsightFace detection
+    # (seconds of CPU) and uploads to R2 - long enough for Neon to terminate the
+    # connection mid-transaction. The next statement then fails with "server closed the
+    # connection unexpectedly" and kills the entire run (observed on a slower machine,
+    # where longer detection times make the idle gap wider). Two settings address that:
+    #
+    #   keepalives      - TCP-level keepalive probes so the connection carries traffic
+    #                     during those long CPU-bound gaps and is not seen as idle.
+    #                     The interval is well under Neon's idle timeout.
+    #   pool_recycle    - proactively discards connections older than this, so one is
+    #                     never reused close to the server's own cutoff.
+    return create_engine(
+        database_url,
+        future=True,
+        pool_pre_ping=True,
+        pool_recycle=280,
+        connect_args={
+            "keepalives": 1,
+            "keepalives_idle": 30,
+            "keepalives_interval": 10,
+            "keepalives_count": 5,
+        },
+    )
 
 
 def build_postgres_session_factory(database_url: str) -> sessionmaker[Session]:
