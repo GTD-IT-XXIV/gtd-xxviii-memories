@@ -14,6 +14,18 @@ class Settings(BaseSettings):
 
     # Face detection/embedding
     insightface_model_pack: str = "buffalo_l"
+
+    # Run detection/embedding on the GPU when one is usable, falling back to CPU
+    # otherwise. Detection is ~85% of scan wall-clock time (measured: 4.54s of 5.35s
+    # per photo at det_size=1024 on an RTX 4060 laptop's CPU path), so this is by far
+    # the biggest available speedup for a batch scan.
+    #
+    # Requires the onnxruntime-gpu package plus its native deps - on Windows/NVIDIA
+    # that is CUDA 13.x and cuDNN 9.x (see backend/README.md). If those are missing,
+    # onnxruntime does NOT raise: it silently binds CPU instead, which looks like "the
+    # GPU didn't help". app/scanning/face_engine.py therefore logs a warning when GPU
+    # was requested but no accelerated provider actually bound. Set false to force CPU.
+    use_gpu: bool = True
     # SCRFD's input resolution. Faces get resized down to fit this square before the
     # network ever sees them, so in a 30+ person group photo where each face is only
     # a few dozen pixels wide to begin with, a small det_size compounds with

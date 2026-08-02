@@ -5,6 +5,19 @@ pydantic>=2
 pydantic-settings
 python-multipart
 insightface
+# CPU build, deliberately the default: it works everywhere with no native deps.
+#
+# For a big batch scan on an NVIDIA machine, swap it for the GPU build - detection is
+# ~85% of scan wall-clock time and this was measured at 9.1x faster (4.54s -> 0.50s per
+# photo, det_size=1024, RTX 4060 laptop):
+#
+#     pip uninstall onnxruntime
+#     pip install onnxruntime-gpu nvidia-cudnn-cu13
+#     winget install Nvidia.CUDA --version 13.3   # ORT 1.28 needs CUDA 13.x + cuDNN 9.x
+#
+# app/scanning/face_engine.py then picks CUDA automatically (settings.use_gpu) and warns
+# loudly if it was requested but silently fell back to CPU - onnxruntime does not raise
+# when a provider's DLLs are missing, it just quietly runs on CPU.
 onnxruntime
 numpy
 pillow

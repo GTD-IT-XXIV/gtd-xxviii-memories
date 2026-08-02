@@ -1,3 +1,6 @@
+import logging
+import os
+import sys
 import threading
 from dataclasses import dataclass
 
@@ -5,6 +8,8 @@ import cv2
 import numpy as np
 
 from app.config import settings
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -21,6 +26,44 @@ _init_lock = threading.Lock()
 _SHARPNESS_CROP_SIZE = 128
 
 
+def _register_cuda_dll_dirs() -> None:
+    """Windows only: put the CUDA/cuDNN DLLs on the loader's search path.
+
+    onnxruntime-gpu's provider DLL links against cublasLt64_13.dll and cudnn64_9.dll,
+    but does NOT locate them itself. The NVIDIA pip wheels install into
+    site-packages/nvidia/<pkg>/bin (a layout nothing adds to PATH), so without this the
+    provider fails to load with "cublasLt64_13.dll is missing" and onnxruntime SILENTLY
+    FALLS BACK TO CPU - no exception, just an unexplained lack of speedup. That silent
+    fallback is exactly why detect_faces() below asserts on the bound provider rather
+    than trusting the requested one.
+
+    Safe on machines without CUDA: every path is existence-checked, so this is a no-op
+    when the wheels or toolkit aren't installed and the CPU path is unaffected.
+    """
+    if not hasattr(os, "add_dll_directory"):  # non-Windows
+        return
+    site_packages = os.path.join(sys.prefix, "Lib", "site-packages", "nvidia")
+    candidates = [
+        os.path.join(site_packages, "cu13", "bin", "x86_64"),
+        os.path.join(site_packages, "cudnn", "bin"),
+        # Toolkit install, as a fallback when the pip wheels aren't present.
+        r"C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v13.3\bin\x64",
+    ]
+    found = [d for d in candidates if os.path.isdir(d)]
+    for directory in found:
+        try:
+            os.add_dll_directory(directory)
+        except OSError:  # already registered, or not accessible - not fatal
+            pass
+    # add_dll_directory alone is NOT sufficient here. It governs how Python resolves
+    # the DLLs it loads directly, but cublasLt64_13.dll is a TRANSITIVE dependency of
+    # onnxruntime_providers_cuda.dll, and the Windows loader resolves those through
+    # PATH. Without this prepend the provider still fails with "cublasLt64_13.dll is
+    # missing" despite the directory being registered above.
+    if found:
+        os.environ["PATH"] = os.pathsep.join(found) + os.pathsep + os.environ.get("PATH", "")
+
+
 def _get_app():
     global _analysis_app
     # Double-checked locking: the scan pipeline calls this from multiple worker
@@ -33,15 +76,53 @@ def _get_app():
     if _analysis_app is None:
         with _init_lock:
             if _analysis_app is None:
+                _register_cuda_dll_dirs()
                 from insightface.app import FaceAnalysis
 
+                # Providers are tried in order, so a machine without a working GPU
+                # transparently lands on CPU. CoreML covers Apple Silicon (the M-series
+                # Macs some operators scan from); CUDA covers NVIDIA.
                 app = FaceAnalysis(
                     name=settings.insightface_model_pack,
-                    providers=["CPUExecutionProvider"],
+                    providers=[
+                        "CUDAExecutionProvider",
+                        "CoreMLExecutionProvider",
+                        "CPUExecutionProvider",
+                    ],
                 )
-                app.prepare(ctx_id=-1, det_size=(settings.det_size, settings.det_size))
+                # ctx_id selects the InsightFace device: >=0 is a GPU ordinal, -1 forces
+                # CPU regardless of the providers above. Detection is ~85% of scan
+                # runtime (measured), so this is the setting that actually matters.
+                ctx_id = 0 if settings.use_gpu else -1
+                app.prepare(ctx_id=ctx_id, det_size=(settings.det_size, settings.det_size))
                 _analysis_app = app
+
+                bound = _bound_providers(app)
+                accelerated = {"CUDAExecutionProvider", "CoreMLExecutionProvider"} & bound
+                if settings.use_gpu and not accelerated:
+                    # Loud on purpose. The failure mode this guards against is a silent
+                    # CPU fallback that looks like "the GPU just didn't help much".
+                    logger.warning(
+                        "GPU was requested (use_gpu=True) but onnxruntime bound only %s. "
+                        "Detection is running on CPU. Check that onnxruntime-gpu is installed "
+                        "and its CUDA/cuDNN dependencies are importable.",
+                        sorted(bound) or ["<none>"],
+                    )
+                else:
+                    logger.info("Face detection providers: %s", sorted(bound))
     return _analysis_app
+
+
+def _bound_providers(app) -> set[str]:
+    """Providers onnxruntime ACTUALLY bound, across every model in the pack - not the
+    ones requested. These differ whenever a provider's shared library fails to load,
+    which onnxruntime reports only as a log line, never as an exception."""
+    bound: set[str] = set()
+    for model in getattr(app, "models", {}).values():
+        session = getattr(model, "session", None)
+        if session is not None:
+            bound.update(session.get_providers())
+    return bound
 
 
 def _keypoints_within_bbox(
