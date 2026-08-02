@@ -125,6 +125,17 @@ class R2Client:
         extra = {"ContentType": content_type} if content_type else {}
         self._s3.put_object(Bucket=self._bucket, Key=key, Body=fileobj, **extra)
 
+    def copy_object(self, source_key: str, dest_key: str) -> None:
+        """Server-side copy within the bucket (S3 CopyObject). The bytes never transit
+        this machine, so a bulk rename costs one round trip per object instead of a
+        download plus an upload. S3/R2 has no move/rename operation - a rename is
+        always copy-then-delete, and the delete must be a separate step."""
+        self._s3.copy_object(
+            Bucket=self._bucket,
+            CopySource={"Bucket": self._bucket, "Key": source_key},
+            Key=dest_key,
+        )
+
     def delete_objects(self, keys: list[str]) -> list[str]:
         """Batch-deletes objects (S3 DeleteObjects caps at 1000 keys/call, so this
         chunks). Returns the keys that failed to delete (empty list = all succeeded)
