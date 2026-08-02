@@ -23,6 +23,26 @@ class DetectedFace:
 _analysis_app = None
 _init_lock = threading.Lock()
 
+# Serializes app.get() when inference is running on CUDA; None on CPU.
+#
+# The scan calls detect_faces() from a ThreadPoolExecutor. That is fine on CPU -
+# onnxruntime's CPU EP supports concurrent Run() calls on one session - but the CUDA EP
+# here does NOT: concurrent calls fail intermittently inside cuDNN's graph API with
+#
+#   cuLaunchKernel returned error invalid argument (1)
+#   CUDNN_FE failure 11: CUDNN_BACKEND_API_FAILED ... conv.cc
+#
+# Measured on an RTX 4060: 8/8 photos succeed single-threaded, 14/16 with 4 threads.
+# The failures land in the 2d106det landmark and genderage models rather than in
+# detection, so a detection-only benchmark does not surface them - only a real scan does.
+#
+# Serializing costs little in practice: GPU inference is ~9x faster than CPU, so one
+# GPU thread still beats several CPU threads, and the workers continue to overlap their
+# R2 downloads and image decodes around the lock.
+# (annotated as the class, not threading.Lock - the latter is a factory function and
+# cannot be used in a runtime-evaluated union annotation)
+_gpu_inference_lock: "threading.RLock | None" = None
+
 _SHARPNESS_CROP_SIZE = 128
 
 
@@ -110,6 +130,9 @@ def _get_app():
                 _analysis_app = app
 
                 bound = _bound_providers(app)
+                if "CUDAExecutionProvider" in bound:
+                    global _gpu_inference_lock
+                    _gpu_inference_lock = threading.Lock()
                 if settings.use_gpu and "CUDAExecutionProvider" not in bound:
                     # Informational, not a warning: CPU is the correct and expected
                     # outcome on any machine without an NVIDIA GPU (e.g. the M-series
@@ -202,7 +225,14 @@ def detect_faces(bgr_image: np.ndarray) -> list[DetectedFace]:
     underexposed detections per configured thresholds.
     """
     app = _get_app()
-    raw_faces = app.get(bgr_image)
+    if _gpu_inference_lock is not None:
+        # CUDA inference is serialized - see _gpu_inference_lock. The scan's worker
+        # threads still overlap their R2 downloads and JPEG decodes with this, which is
+        # where the remaining parallelism comes from.
+        with _gpu_inference_lock:
+            raw_faces = app.get(bgr_image)
+    else:
+        raw_faces = app.get(bgr_image)
 
     results: list[DetectedFace] = []
     for f in raw_faces:
