@@ -9,6 +9,7 @@ app/scanning/thumbnails.py and FileResponse - completely unaffected by this modu
 from __future__ import annotations
 
 import mimetypes
+import warnings
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, BinaryIO
 
@@ -17,6 +18,29 @@ from botocore.config import Config
 
 if TYPE_CHECKING:
     from app.config import Settings
+
+# Silence a FALSE POSITIVE from urllib3 2.7 + botocore, scoped to this warning class
+# only - every other warning, including any other TLS warning, still surfaces.
+#
+# Under the batch scan's concurrent load, urllib3's _validate_conn() emits
+# InsecureRequestWarning for R2 requests even though botocore's URLLib3Session is
+# configured with verify=True (confirmed by inspecting the live client) and the
+# connection is genuinely verified: a direct handshake to the bucket host with
+# ssl.create_default_context() succeeds on TLS 1.3 against a valid Google Trust
+# Services certificate for that exact hostname. The warning comes from urllib3
+# misreading is_verified on pooled connections, not from an unverified request - it
+# only appears under sustained concurrency, never on isolated calls.
+#
+# It mattered because the scan prints one per request, burying the actual progress
+# output on every operator's machine. If this is ever removed, re-check whether
+# urllib3/botocore have fixed the interaction rather than assuming the requests are
+# insecure - they are not.
+try:
+    from urllib3.exceptions import InsecureRequestWarning
+
+    warnings.filterwarnings("ignore", category=InsecureRequestWarning)
+except ImportError:  # urllib3 absent/renamed - nothing to silence
+    pass
 
 
 @dataclass(frozen=True)
