@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import mimetypes
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, BinaryIO
 
 import boto3
 from botocore.config import Config
@@ -70,20 +70,36 @@ def guess_content_type(filename: str) -> str:
 class R2Client:
     """Thin wrapper around a boto3 S3 client pointed at a Cloudflare R2 bucket."""
 
-    def __init__(self, config: R2Config) -> None:
+    def __init__(self, config: R2Config, max_pool_connections: int = 10) -> None:
+        """`max_pool_connections` must be >= the number of threads sharing this client,
+        otherwise botocore queues requests behind its connection pool (default 10) and
+        silently caps concurrency. Callers that stay single-threaded can leave it."""
         self._bucket = config.bucket_name
         self._s3 = boto3.client(
             "s3",
             endpoint_url=config.endpoint_url,
             aws_access_key_id=config.access_key_id,
             aws_secret_access_key=config.secret_access_key,
-            config=Config(signature_version="s3v4", retries={"max_attempts": 3, "mode": "standard"}),
+            config=Config(
+                signature_version="s3v4",
+                retries={"max_attempts": 3, "mode": "standard"},
+                max_pool_connections=max_pool_connections,
+            ),
             region_name="auto",
         )
 
     def upload_bytes(self, key: str, data: bytes, content_type: str | None = None) -> None:
         extra = {"ContentType": content_type} if content_type else {}
         self._s3.put_object(Bucket=self._bucket, Key=key, Body=data, **extra)
+
+    def upload_fileobj(self, key: str, fileobj: BinaryIO, content_type: str | None = None) -> None:
+        """Streaming counterpart of upload_bytes: hands botocore an open file handle so
+        the payload is chunked off disk instead of read fully into memory first. Used by
+        the bulk originals upload, where full-resolution photos are multi-MB and many
+        uploads are in flight at once. Thumbnails stay on upload_bytes - they're already
+        in memory as freshly encoded JPEG bytes."""
+        extra = {"ContentType": content_type} if content_type else {}
+        self._s3.put_object(Bucket=self._bucket, Key=key, Body=fileobj, **extra)
 
     def delete_objects(self, keys: list[str]) -> list[str]:
         """Batch-deletes objects (S3 DeleteObjects caps at 1000 keys/call, so this
