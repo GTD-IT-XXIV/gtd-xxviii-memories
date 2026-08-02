@@ -80,13 +80,25 @@ def _get_app():
                 from insightface.app import FaceAnalysis
 
                 # Providers are tried in order, so a machine without a working GPU
-                # transparently lands on CPU. CoreML covers Apple Silicon (the M-series
-                # Macs some operators scan from); CUDA covers NVIDIA.
+                # transparently lands on CPU.
+                #
+                # CoreMLExecutionProvider is deliberately NOT listed. It was tried for
+                # Apple Silicon and it does not merely underperform - it makes the scan
+                # fail outright on every photo:
+                #
+                #   CoreML static output shape ({1,1,1,8192,1}) and inferred shape
+                #   ({3200,1}) have different ranks
+                #
+                # SCRFD's detection head emits a dynamic number of candidate boxes,
+                # while CoreML requires static output shapes, so the partitioned
+                # subgraph's rank never matches and every ExecuteKernel call raises.
+                # onnxruntime does not fall back to CPU on a runtime failure (only on a
+                # provider that fails to LOAD), so the photo just errors out. M-series
+                # Macs therefore run on CPU, which is fast enough there in practice.
                 app = FaceAnalysis(
                     name=settings.insightface_model_pack,
                     providers=[
                         "CUDAExecutionProvider",
-                        "CoreMLExecutionProvider",
                         "CPUExecutionProvider",
                     ],
                 )
@@ -98,14 +110,17 @@ def _get_app():
                 _analysis_app = app
 
                 bound = _bound_providers(app)
-                accelerated = {"CUDAExecutionProvider", "CoreMLExecutionProvider"} & bound
-                if settings.use_gpu and not accelerated:
-                    # Loud on purpose. The failure mode this guards against is a silent
-                    # CPU fallback that looks like "the GPU just didn't help much".
-                    logger.warning(
-                        "GPU was requested (use_gpu=True) but onnxruntime bound only %s. "
-                        "Detection is running on CPU. Check that onnxruntime-gpu is installed "
-                        "and its CUDA/cuDNN dependencies are importable.",
+                if settings.use_gpu and "CUDAExecutionProvider" not in bound:
+                    # Informational, not a warning: CPU is the correct and expected
+                    # outcome on any machine without an NVIDIA GPU (e.g. the M-series
+                    # Macs that also run scans), and use_gpu defaults to True there too.
+                    # It is only worth investigating if CUDA was actually expected -
+                    # onnxruntime never raises when a provider's libraries are missing,
+                    # it just quietly binds CPU, so this line is the only signal.
+                    logger.info(
+                        "Face detection running on CPU (bound: %s). If this machine has an "
+                        "NVIDIA GPU, check that onnxruntime-gpu is installed with CUDA 13.x "
+                        "and cuDNN 9.x - see backend/requirements.txt.",
                         sorted(bound) or ["<none>"],
                     )
                 else:
