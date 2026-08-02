@@ -1,7 +1,5 @@
-import { Readable } from "node:stream";
-import { ZipArchive } from "archiver";
 import { getSql } from "@/lib/db";
-import { getObjectStream } from "@/lib/r2";
+import { presignGetUrl } from "@/lib/r2";
 
 const MAX_PHOTOS = 500;
 
@@ -11,8 +9,9 @@ interface PhotoRow {
   r2_key: string | null;
 }
 
-/** Dedupes filenames within one zip (two originals can share a filename when
- * scanned from different source folders/machines) by suffixing " (n)". */
+/** Dedupes filenames within one download batch (two originals can share a
+ * filename when scanned from different source folders/machines) by
+ * suffixing " (n)". */
 function uniqueNamer() {
   const seen = new Map<string, number>();
   return (filename: string): string => {
@@ -24,6 +23,27 @@ function uniqueNamer() {
   };
 }
 
+/**
+ * Returns short-lived presigned R2 URLs for the requested photos so the browser
+ * downloads each original DIRECTLY from R2.
+ *
+ * This route used to stream the originals through the server into a zip
+ * (r2 -> server -> browser). That made every downloaded byte count as Vercel
+ * origin transfer, and originals here are 8-15MB each: a single 500-photo
+ * download moved several GB and burned the whole monthly allowance in one go.
+ * R2's egress to the internet is free, so handing out presigned URLs and
+ * letting the client fetch them takes this route's transfer to ~zero - the
+ * response is now a few KB of JSON regardless of how many photos are selected.
+ *
+ * The tradeoff is deliberate: the user gets N separate files instead of one
+ * zip. Zipping without proxying the bytes would have to happen client-side
+ * (browser memory) or in a Cloudflare Worker (free egress) - see the gallery
+ * download notes in README.md.
+ *
+ * Access control is unchanged: proxy.ts gates every non-auth route behind a
+ * valid session, so only logged-in users can reach this and obtain URLs. The
+ * URLs themselves expire in an hour (lib/r2.ts PRESIGN_EXPIRY_SECONDS).
+ */
 export async function POST(request: Request) {
   const body = await request.json().catch(() => null);
   const photoIds = Array.isArray(body?.photoIds)
@@ -48,29 +68,16 @@ export async function POST(request: Request) {
     return Response.json({ error: "No matching photos found" }, { status: 404 });
   }
 
-  const archive = new ZipArchive({ zlib: { level: 6 } });
   const nameFor = uniqueNamer();
+  // Signing is a local SigV4 computation with no network round trip, so doing
+  // 500 of them in one request is cheap (same reasoning as presignGetUrls).
+  const files = await Promise.all(
+    rows.map(async (row) => ({
+      id: row.id,
+      filename: nameFor(row.filename),
+      url: await presignGetUrl(row.r2_key),
+    }))
+  );
 
-  // Appends run in the background as the response stream is consumed by the
-  // client; archiver pulls from each object stream in turn and finalizes once
-  // every entry has been added.
-  (async () => {
-    for (const row of rows) {
-      try {
-        const stream = await getObjectStream(row.r2_key!);
-        archive.append(stream, { name: nameFor(row.filename) });
-      } catch (err) {
-        console.error(`gallery download: failed to fetch r2_key=${row.r2_key} for photo ${row.id}`, err);
-      }
-    }
-    archive.finalize();
-  })();
-
-  const timestamp = new Date().toISOString().slice(0, 10);
-  return new Response(Readable.toWeb(archive) as unknown as ReadableStream, {
-    headers: {
-      "Content-Type": "application/zip",
-      "Content-Disposition": `attachment; filename="gtd-photos-${timestamp}.zip"`,
-    },
-  });
+  return Response.json({ files: files.filter((f) => f.url !== null) });
 }

@@ -61,14 +61,8 @@ export async function presignGetUrls(
   return Promise.all(keys.map((key) => presignGetUrl(key)));
 }
 
-/**
- * Fetches an object's body as a Node Readable stream, for server-side
- * re-streaming (e.g. bundling several originals into a zip) rather than
- * generating a client-facing presigned URL.
- */
-export async function getObjectStream(key: string): Promise<NodeJS.ReadableStream> {
-  const client = getR2Client();
-  const command = new GetObjectCommand({ Bucket: getBucket(), Key: key });
-  const { Body } = await client.send(command);
-  return Body as NodeJS.ReadableStream;
-}
+// NOTE: a getObjectStream() helper used to live here, for streaming originals
+// through the server into a zip. It was removed along with that download path -
+// proxying image bytes through the server made them count as origin transfer.
+// Everything client-facing goes through presigned URLs above so the browser
+// fetches from R2 directly (R2 egress to the internet is free).
