@@ -16,6 +16,7 @@
     "@aws-sdk/s3-request-presigner": "^3.1098.0",
     "@neondatabase/serverless": "^1.1.0",
     "jose": "^6.2.5",
+    "jszip": "^3.10.1",
     "next": "16.2.12",
     "react": "19.2.4",
     "react-dom": "19.2.4"

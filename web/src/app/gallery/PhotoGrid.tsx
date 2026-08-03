@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import JSZip from "jszip";
 
 export interface GalleryPhoto {
   id: number;
@@ -16,10 +17,6 @@ export default function PhotoGrid({ photos }: { photos: GalleryPhoto[] }) {
   const [selected, setSelected] = useState<Set<number>>(new Set());
   const [downloading, setDownloading] = useState(false);
   const [downloadProgress, setDownloadProgress] = useState<{ done: number; total: number } | null>(null);
-  // Set once a run finishes, to prompt the user to verify nothing was blocked.
-  // The page cannot observe whether a download actually saved, so this asks
-  // rather than claims success.
-  const [finishedCount, setFinishedCount] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [previewPhoto, setPreviewPhoto] = useState<GalleryPhoto | null>(null);
   const [previewLoaded, setPreviewLoaded] = useState(false);
@@ -44,7 +41,6 @@ export default function PhotoGrid({ photos }: { photos: GalleryPhoto[] }) {
   const allOnPageSelected = photos.length > 0 && photos.every((p) => selected.has(p.id));
 
   function toggle(id: number) {
-    setFinishedCount(null); // stale once the selection no longer matches the run
     setSelected((cur) => {
       const next = new Set(cur);
       if (next.has(id)) next.delete(id);
@@ -54,7 +50,6 @@ export default function PhotoGrid({ photos }: { photos: GalleryPhoto[] }) {
   }
 
   function toggleSelectAll() {
-    setFinishedCount(null);
     setSelected((cur) => {
       if (allOnPageSelected) {
         const next = new Set(cur);
@@ -68,7 +63,6 @@ export default function PhotoGrid({ photos }: { photos: GalleryPhoto[] }) {
   }
 
   function clearSelection() {
-    setFinishedCount(null);
     setSelected(new Set());
   }
 
@@ -76,31 +70,28 @@ export default function PhotoGrid({ photos }: { photos: GalleryPhoto[] }) {
 
   const selectedIds = useMemo(() => Array.from(selected), [selected]);
 
-  // Browsers rate-limit rapid programmatic downloads (and some prompt once a
-  // page requests several), so the anchor clicks are spaced out rather than
-  // fired in a tight loop. Slow enough to be reliable, fast enough that a
-  // typical selection finishes quickly.
-  const DOWNLOAD_GAP_MS = 350;
-  // Past this many files the "allow multiple downloads?" prompt and the sheer
-  // number of save dialogs stop being a footnote, so confirm before starting.
-  const CONFIRM_ABOVE = 20;
+  // Fetching all 500 originals at once would hit the browser's per-origin
+  // connection limit and stall; a small worker pool keeps several R2 fetches
+  // in flight without opening hundreds of connections at once.
+  const DOWNLOAD_CONCURRENCY = 6;
+  // Originals run 8-15MB each, and the whole batch sits in memory as JSZip
+  // packs it, so a big selection is a real memory/time cost worth confirming
+  // up front rather than a footnote.
+  const CONFIRM_ABOVE = 60;
 
   async function downloadSelected() {
     if (
       selectedIds.length > CONFIRM_ABOVE &&
       !window.confirm(
-        `This will download ${selectedIds.length} separate files, one after another.\n\n` +
-          `Your browser will likely ask permission to download multiple files - you must click "Allow", ` +
-          `or only the first photo will be saved.\n\n` +
-          `It takes about ${Math.ceil((selectedIds.length * DOWNLOAD_GAP_MS) / 1000)}s to start them all. Continue?`
+        `This will fetch and zip ${selectedIds.length} full-size photos in your browser, which can take a ` +
+          `while and use a lot of memory on the device. Continue?`
       )
     ) {
       return;
     }
     setError(null);
-    setFinishedCount(null);
     setDownloading(true);
-    setDownloadProgress(null);
+    setDownloadProgress({ done: 0, total: selectedIds.length });
     try {
       // The server hands back presigned R2 URLs; the actual image bytes are
       // fetched by the browser straight from R2, never through our server.
@@ -119,24 +110,50 @@ export default function PhotoGrid({ photos }: { photos: GalleryPhoto[] }) {
       };
       if (!files?.length) throw new Error("No downloadable photos found");
 
-      for (let i = 0; i < files.length; i++) {
-        const file = files[i];
-        setDownloadProgress({ done: i, total: files.length });
-        const a = document.createElement("a");
-        a.href = file.url;
-        // The signed URL already carries Content-Disposition: attachment (set
-        // server-side), which is what actually forces the save - this attribute
-        // is ignored cross-origin. Kept only as a same-origin fallback.
-        a.download = file.filename;
-        document.body.appendChild(a);
-        a.click();
-        a.remove();
-        if (i < files.length - 1) {
-          await new Promise((resolve) => setTimeout(resolve, DOWNLOAD_GAP_MS));
+      // Packed into one zip client-side (rather than one download per photo)
+      // so the browser only ever sees a single download - triggering several
+      // separate downloads at once runs into the browser's "allow multiple
+      // downloads?" gate, which silently blocks everything past the first
+      // file once a site has ever been denied.
+      const zip = new JSZip();
+      let doneCount = 0;
+      let failedCount = 0;
+      setDownloadProgress({ done: 0, total: files.length });
+
+      let nextIndex = 0;
+      async function worker() {
+        while (nextIndex < files.length) {
+          const file = files[nextIndex++];
+          try {
+            const blob = await (await fetch(file.url)).blob();
+            zip.file(file.filename, blob);
+          } catch (err) {
+            console.error(`gallery download: failed to fetch ${file.filename}`, err);
+            failedCount++;
+          }
+          doneCount++;
+          setDownloadProgress({ done: doneCount, total: files.length });
         }
       }
-      setDownloadProgress({ done: files.length, total: files.length });
-      setFinishedCount(files.length);
+      await Promise.all(
+        Array.from({ length: Math.min(DOWNLOAD_CONCURRENCY, files.length) }, worker)
+      );
+
+      if (failedCount === files.length) throw new Error("All photos failed to download");
+
+      const zipBlob = await zip.generateAsync({ type: "blob" });
+      const url = URL.createObjectURL(zipBlob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `gtd-photos-${new Date().toISOString().slice(0, 10)}.zip`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+
+      if (failedCount > 0) {
+        setError(`${failedCount} of ${files.length} photos failed to download and were left out of the zip`);
+      }
     } catch (e) {
       setError(e instanceof Error ? e.message : "Download failed");
     } finally {
@@ -164,7 +181,7 @@ export default function PhotoGrid({ photos }: { photos: GalleryPhoto[] }) {
               className="px-3 py-1 rounded bg-indigo-600 text-white text-xs disabled:opacity-50"
             >
               {downloading && downloadProgress
-                ? `Downloading ${downloadProgress.done}/${downloadProgress.total}...`
+                ? `Zipping ${downloadProgress.done}/${downloadProgress.total}...`
                 : downloading
                   ? "Preparing..."
                   : "Download selected"}
@@ -177,33 +194,10 @@ export default function PhotoGrid({ photos }: { photos: GalleryPhoto[] }) {
         {error && <span className="text-xs text-red-600">{error}</span>}
       </div>
 
-      {/* Photos download individually straight from storage rather than as one
-          zip, so browsers treat a multi-photo selection as a burst of downloads
-          and gate it behind a permission prompt. Warn up front - a dismissed or
-          missed prompt silently saves only the first file. */}
-      {selectedCount > 1 && !downloading && (
-        <div className="mb-3 rounded border border-amber-300 bg-amber-50 px-3 py-2 text-xs text-amber-900">
-          <strong>Heads up:</strong> these download as {selectedCount} separate files, not a zip.
-          Your browser will probably ask permission to download multiple files &ndash; choose{" "}
-          <strong>Allow</strong>, otherwise only the first photo is saved. If nothing happens, look
-          for a blocked-download icon in the address bar.
-        </div>
-      )}
-
       {downloading && downloadProgress && (
         <div className="mb-3 rounded border border-indigo-300 bg-indigo-50 px-3 py-2 text-xs text-indigo-900">
-          Starting download {downloadProgress.done}/{downloadProgress.total} &ndash; keep this tab open
-          until it finishes. If your browser asked permission and you missed it, click{" "}
-          <strong>Allow</strong> and download again.
-        </div>
-      )}
-
-      {finishedCount !== null && !downloading && (
-        <div className="mb-3 rounded border border-green-300 bg-green-50 px-3 py-2 text-xs text-green-900">
-          Started {finishedCount} download{finishedCount === 1 ? "" : "s"}.{" "}
-          <strong>Check your downloads folder</strong> &ndash; if you got fewer files than expected,
-          your browser blocked the rest. Allow multiple downloads for this site, then click Download
-          again.
+          Fetching and zipping photo {downloadProgress.done}/{downloadProgress.total} &ndash; keep this
+          tab open until the download starts.
         </div>
       )}
 
