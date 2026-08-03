@@ -11,7 +11,9 @@ is not required for the site to work - it just improves preview quality photo by
 Reads each original back from R2, downscales it, uploads the preview, and sets
 photos.r2_preview_key. Nothing is deleted or overwritten: originals and existing
 thumbnails are untouched, and photos that already have a preview are skipped, so this
-is safe to interrupt and re-run - a re-run only does what's still missing.
+is safe to interrupt and re-run - a re-run only does what's still missing. Progress is
+committed every FLUSH_EVERY photos (and on Ctrl-C), so an interrupted run keeps what it
+already finished.
 
 Note this DOES cost R2 Class B (GET) operations to re-read each original, unlike the
 scan-time path which already has the decoded image in memory. At ~2k photos that is
@@ -46,6 +48,10 @@ from app.scanning.thumbnails import photo_preview_bytes
 from app.storage.r2 import R2Client, r2_config_from_settings
 
 DEFAULT_WORKERS = 8
+# Persist r2_preview_key every N photos. Small enough that an interrupted run loses
+# only a partial chunk, large enough that a 10k-photo run isn't 10k round trips to a
+# serverless Postgres.
+FLUSH_EVERY = 200
 
 
 def main() -> None:
@@ -121,30 +127,54 @@ def main() -> None:
                 failed += 1
             print(f"\nERROR photo {photo_id} ({r2_key}): {exc}")
 
-    with ThreadPoolExecutor(max_workers=args.workers) as pool:
-        for i, _ in enumerate(pool.map(work, todo), 1):
-            if i % 25 == 0 or i == len(todo):
-                elapsed = time.time() - start
-                print(
-                    f"\r  {i}/{len(todo)}  ok={done} failed={failed}  "
-                    f"{i / max(1e-6, elapsed):.1f}/s",
-                    end="",
-                    flush=True,
-                )
-    print("\n")
+    def flush_results() -> int:
+        """Writes the r2_preview_key values accumulated so far and clears the buffer.
 
-    # DB writes are batched at the end rather than per-photo so a long run isn't
-    # thousands of round trips to a serverless Postgres. The R2 objects are already
-    # uploaded at this point; if this write fails, a re-run regenerates them (a few
-    # wasted uploads, no corruption) since r2_preview_key would still be NULL.
-    if results:
+        Called periodically rather than only at the end. Batching every write to the
+        very end keeps round trips down, but it makes the whole run all-or-nothing for
+        DB state: killing it after an hour leaves thousands of previews sitting in R2
+        that the database knows nothing about, so a resumed run regenerates every one
+        of them (this happened, and the state had to be reconstructed by hand from an
+        R2 listing). Flushing in chunks keeps the resume contract honest - whatever
+        finished stays finished.
+        """
+        with lock:
+            pending, results[:] = list(results), []
+        if not pending:
+            return 0
         with session_factory() as session:
-            for photo_id, key in results:
+            for photo_id, key in pending:
                 session.execute(
                     text("UPDATE photos SET r2_preview_key = :key WHERE id = :id"),
                     {"key": key, "id": photo_id},
                 )
             session.commit()
+        return len(pending)
+
+    flushed = 0
+    try:
+        with ThreadPoolExecutor(max_workers=args.workers) as pool:
+            for i, _ in enumerate(pool.map(work, todo), 1):
+                if i % FLUSH_EVERY == 0:
+                    flushed += flush_results()
+                if i % 25 == 0 or i == len(todo):
+                    elapsed = time.time() - start
+                    print(
+                        f"\r  {i}/{len(todo)}  ok={done} failed={failed} saved={flushed}  "
+                        f"{i / max(1e-6, elapsed):.1f}/s",
+                        end="",
+                        flush=True,
+                    )
+    except KeyboardInterrupt:
+        # Persist what already succeeded before exiting, so Ctrl-C costs at most one
+        # partial chunk instead of the entire run's DB state.
+        print("\n\nInterrupted - saving completed previews...")
+        flushed += flush_results()
+        print(f"Saved {flushed} preview key(s). Re-run to continue where this left off.")
+        raise SystemExit(130)
+    print("\n")
+
+    flushed += flush_results()
 
     elapsed = time.time() - start
     print(f"Done in {elapsed:.1f}s. Generated: {done}, failed: {failed}")
