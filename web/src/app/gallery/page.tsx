@@ -8,7 +8,7 @@ export const dynamic = "force-dynamic";
 
 const PAGE_SIZE = 48;
 
-const ALL_DAYS = [1, 2, 3];
+const ALL_DAYS = [1, 2, 3, 4];
 const ALL_OGS = Array.from({ length: 8 }, (_, i) => `OG${i + 1}`);
 
 interface PhotoRow {
