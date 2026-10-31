@@ -1,6 +1,7 @@
 // This page reads searchParams and reflects the current
 // TELEGRAM_OIDC_CLIENT_ID config, so there's no benefit to static
 // generation.
+/*
 export const dynamic = "force-dynamic";
 
 const ERROR_MESSAGES: Record<string, string> = {
@@ -56,6 +57,43 @@ export default async function LoginPage({
           instructions.
         </p>
       )}
+    </div>
+  );
+}
+*/
+
+export default function LoginPage() {
+  return (
+    <div className="fixed inset-0 z-50 overflow-hidden bg-black">
+      <div
+        className="absolute inset-0 bg-cover bg-center opacity-30"
+        style={{ backgroundImage: "url('/background.JPG')" }}
+      />
+
+      <div className="absolute inset-0 bg-gradient-to-b from-black via-transparent to-black" />
+      <div className="absolute inset-0 bg-gradient-to-r from-black/75 via-transparent to-black/75" />
+
+      <div className="relative z-10 flex h-full flex-col items-center justify-center gap-4 p-10 text-center text-white">
+        {/* eslint-disable-next-line @next/next/no-img-element */}
+        <img
+          src="/aeterna_logo.PNG"
+          alt="Aeterna"
+          className="h-60 w-auto"
+        />
+        <h1 className="text-3xl font-semibold">GTD XXVIII Memories</h1>
+        <p className="max-w-sm text-sm text-gray-300">
+          Thank you for being part of GTD XXVIII, creating great memories
+          together. We hope you enjoyed the event and captured some wonderful
+          moments.
+        </p>
+        <p className="max-w-sm text-sm text-gray-300">The gallery has now been officially shut down.</p>
+        <a
+          href="https://pintugtd.com"
+          className="inline-flex items-center justify-center rounded-md bg-[#26A5E4] px-4 py-2 text-sm font-medium text-white hover:bg-[#1e96d6]"
+        >
+          Go to Home
+        </a>
+      </div>
     </div>
   );
 }
