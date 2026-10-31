@@ -1,3 +1,4 @@
+/*
 import { NextRequest, NextResponse } from "next/server";
 import { COOKIE_NAME, verifySessionToken } from "@/lib/session";
 
@@ -15,6 +16,7 @@ import { COOKIE_NAME, verifySessionToken } from "@/lib/session";
  * app/lib/session.ts. This is intentional per Next's own auth guidance:
  * Proxy runs on every request/prefetch, so it should stay cheap.
  */
+/*
 export async function proxy(request: NextRequest) {
   const token = request.cookies.get(COOKIE_NAME)?.value;
   const session = token ? await verifySessionToken(token) : null;
@@ -29,5 +31,20 @@ export async function proxy(request: NextRequest) {
 export const config = {
   matcher: [
     "/((?!login|api/auth/telegram/start|api/auth/telegram/callback|api/auth/logout|_next/static|_next/image|favicon.ico|.*\\.(?:png|jpg|jpeg|gif|webp|svg|ico|PNG|JPG|JPEG|GIF|WEBP|SVG|ICO)$).*)",
+  ],
+};
+*/
+
+import { NextRequest, NextResponse } from "next/server";
+
+// SHUTDOWN MODE: every matched route redirects to /login, regardless of
+// session. The original session-checking version is in git history.
+export async function proxy(request: NextRequest) {
+  return NextResponse.redirect(new URL("/login", request.url));
+}
+
+export const config = {
+  matcher: [
+    "/((?!login|_next/static|_next/image|favicon.ico|.*\\.(?:png|jpg|jpeg|gif|webp|svg|ico|PNG|JPG|JPEG|GIF|WEBP|SVG|ICO)$).*)",
   ],
 };
